@@ -1,14 +1,16 @@
 {
-	"name": "terminal-agent-tabs",
-	"version": "1.2.1",
-	"description": "Run multiple agent CLI sessions (Claude Code, Codex, Gemini, etc.) as editor tabs.",
+	"name": "beads-agent-tabs",
+	"version": "0.1.0-merge",
+	"description": "Beads issue tracking plus agent CLI session tabs, as one Obsidian plugin.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "node esbuild.config.mjs production",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"package": "./scripts/package.sh"
+		"package": "./scripts/package.sh",
+		"typecheck": "tsc -noEmit -skipLibCheck",
+		"lint": "eslint src/"
 	},
 	"keywords": [
 		"obsidian",
@@ -36,6 +38,7 @@
 		"@xterm/addon-serialize": "^0.13.0",
 		"@xterm/addon-unicode11": "^0.8.0",
 		"@xterm/addon-webgl": "^0.18.0",
-		"@xterm/xterm": "^5.4.0"
+		"@xterm/xterm": "^5.4.0",
+		"@viz-js/viz": "^3.29.0"
 	}
 }

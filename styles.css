@@ -536,3 +536,743 @@
     z-index: 2;
     position: relative;
 }
+/* Beads for Obsidian — pane styles. Uses Obsidian theme variables. */
+
+.beads-pane {
+	padding: 0;
+	font-size: var(--font-ui-small);
+}
+
+/* Header sits flat on the pane's own background — no bar, no border. */
+.beads-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 8px 4px;
+}
+
+.beads-header-title {
+	font-weight: var(--font-semibold);
+}
+
+/* Project switcher — takes the slot the static pane title used to occupy. */
+.beads-project-select {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: auto;
+	padding: 2px 22px 2px 6px;
+	background-color: transparent;
+	box-shadow: none;
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+	cursor: pointer;
+}
+.beads-project-select:hover {
+	background-color: var(--background-modifier-hover);
+}
+
+.beads-header-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	flex: 0 0 auto;
+}
+
+/* Settings tab: one row per configured project. */
+.beads-settings-empty {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	padding: 4px 0 8px;
+}
+.beads-settings-project.is-active {
+	border-left: 2px solid var(--interactive-accent);
+	padding-left: 8px;
+}
+
+.beads-count {
+	color: var(--text-muted);
+	font-weight: var(--font-normal);
+}
+
+/* Tab bar */
+.beads-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	padding: 0 6px 4px;
+}
+.beads-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 3px 8px;
+	background: transparent;
+	box-shadow: none;
+	border: none;
+	border-radius: var(--radius-s);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+}
+.beads-tab:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+.beads-tab.is-active {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+	font-weight: var(--font-semibold);
+}
+.beads-tab-count {
+	color: var(--text-faint);
+	font-size: var(--font-smaller);
+}
+.beads-tab.is-active .beads-tab-count {
+	color: var(--text-muted);
+}
+
+/* Filter bar — search, then label/author/priority/type, one small control each. */
+.beads-filterbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 8px 6px;
+}
+.beads-filter-search {
+	flex: 1 1 120px;
+	min-width: 80px;
+	height: auto;
+	padding: 3px 8px;
+	font-size: var(--font-ui-smaller);
+	box-shadow: none;
+}
+.beads-filter-select {
+	height: auto;
+	padding: 2px 20px 2px 6px;
+	font-size: var(--font-ui-smaller);
+	box-shadow: none;
+}
+.beads-filter-clear {
+	height: auto;
+	padding: 2px 8px;
+	background: transparent;
+	box-shadow: none;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	cursor: pointer;
+}
+.beads-filter-clear:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.beads-loadmore {
+	display: block;
+	width: calc(100% - 16px);
+	margin: 6px 8px 10px;
+	padding: 5px;
+	background: transparent;
+	box-shadow: none;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	color: var(--text-muted);
+	cursor: pointer;
+}
+.beads-loadmore:hover:not(:disabled) {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+@keyframes beads-spin {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+.beads-spin svg {
+	animation: beads-spin 0.8s linear infinite;
+}
+
+.beads-empty {
+	padding: 16px 12px;
+	color: var(--text-muted);
+	text-align: center;
+}
+.beads-error {
+	color: var(--text-error);
+	text-align: left;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.beads-list {
+	display: flex;
+	flex-direction: column;
+}
+
+/* Group headers (In progress / Ready / Blocked / Closed) */
+.beads-group-head {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	padding: 10px 10px 4px;
+	font-size: var(--font-smaller);
+	font-weight: var(--font-semibold);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-muted);
+	margin-top: 6px;
+}
+.beads-group-head:first-child {
+	margin-top: 0;
+}
+.beads-group-count {
+	color: var(--text-faint);
+	font-weight: var(--font-normal);
+}
+.beads-group-ready .beads-group-label {
+	color: var(--text-accent);
+}
+/* Rows follow Obsidian's native list metrics (nav/search feel): roomy hit
+   target, subtle hover, muted secondary text — no loud custom chrome. */
+.beads-row {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) var(--size-4-2);
+	border-radius: var(--radius-s);
+	cursor: pointer;
+}
+.beads-row:hover {
+	background: var(--background-modifier-hover);
+}
+.beads-row-closed {
+	opacity: 0.5;
+}
+
+/* Priority as a small, restrained colored dot (full label on hover). */
+.beads-dot {
+	flex: 0 0 auto;
+	width: 8px;
+	height: 8px;
+	margin-top: 6px;
+	border-radius: 50%;
+	background: var(--text-muted);
+}
+.beads-p0 {
+	background: var(--color-red);
+}
+.beads-p1 {
+	background: var(--color-orange);
+}
+.beads-p2 {
+	background: var(--color-yellow);
+}
+.beads-p3 {
+	background: var(--color-blue);
+}
+.beads-p4 {
+	background: var(--text-faint);
+}
+
+.beads-main {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.beads-title {
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+	line-height: var(--line-height-tight);
+	word-break: break-word;
+}
+.beads-row-closed .beads-title {
+	text-decoration: line-through;
+	color: var(--text-muted);
+}
+.beads-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+	margin-top: 2px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+.beads-id {
+	font-family: var(--font-monospace);
+	color: var(--text-faint);
+}
+.beads-type,
+.beads-status,
+.beads-deps {
+	color: var(--text-muted);
+}
+
+/* Bead editor (embedded, opens as a main-area tab) */
+.beads-editor {
+	display: flex;
+	flex-direction: column;
+	min-height: 100%;
+	padding: 12px 16px 32px;
+	max-width: 900px;
+}
+.beads-editor-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+.beads-editor-id {
+	font-family: var(--font-monospace);
+	color: var(--text-muted);
+}
+.beads-editor-actions {
+	display: flex;
+	gap: 6px;
+}
+/* Title — like a note's inline title */
+.beads-editor-title {
+	width: 100%;
+	border: none;
+	background: transparent;
+	padding: 2px 0;
+	margin: 4px 0 10px;
+	font-size: 1.7em;
+	font-weight: var(--font-bold, 700);
+	font-family: var(--font-text);
+	color: var(--text-normal);
+	line-height: 1.2;
+}
+.beads-editor-title:focus {
+	box-shadow: none;
+}
+
+/* Properties panel — typed field rows, like note Properties */
+.beads-props {
+	display: grid;
+	grid-template-columns: 92px 1fr;
+	align-items: center;
+	gap: 7px 12px;
+	padding: 10px 0;
+	border-top: 1px solid var(--background-modifier-border);
+	border-bottom: 1px solid var(--background-modifier-border);
+	margin-bottom: 6px;
+}
+.beads-prop-key {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+.beads-prop-val {
+	min-width: 0;
+	display: flex;
+	align-items: center;
+}
+.beads-prop-input {
+	width: 100%;
+	max-width: 340px;
+}
+select.beads-prop-input {
+	max-width: 220px;
+}
+
+/* Label chips */
+.beads-labels {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+.beads-label-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 1px 4px 1px 8px;
+	border-radius: 10px;
+	background: var(--background-modifier-hover);
+	border: 1px solid var(--background-modifier-border);
+	font-size: var(--font-smaller);
+}
+.beads-label-x {
+	cursor: pointer;
+	color: var(--text-muted);
+	line-height: 1;
+	padding: 0 2px;
+}
+.beads-label-x:hover {
+	color: var(--text-error);
+}
+.beads-label-add {
+	width: 96px;
+	font-size: var(--font-smaller);
+	padding: 2px 6px;
+}
+
+/* Description — note-style body, not a monospace blob */
+.beads-editor-desc {
+	width: 100%;
+	min-height: 240px;
+	resize: vertical;
+	font-family: var(--font-text);
+	font-size: var(--font-text-size);
+	line-height: var(--line-height-normal, 1.6);
+	padding: 10px 12px;
+	border-radius: 8px;
+	margin-top: 2px;
+}
+.beads-editor-meta {
+	margin-top: 10px;
+	color: var(--text-faint);
+	font-size: var(--font-smaller);
+	font-family: var(--font-monospace);
+	word-break: break-word;
+}
+.beads-editor-section {
+	margin: 18px 0 6px;
+	font-size: var(--font-smaller);
+	font-weight: var(--font-semibold);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-muted);
+}
+.beads-editor-cerr {
+	color: var(--text-error);
+	margin-top: 8px;
+}
+
+/* Dependency lists (shared by editor) */
+.beads-dep-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.beads-dep-item {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 3px 4px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+.beads-dep-item:hover {
+	background: var(--background-modifier-hover);
+}
+.beads-dep-item.beads-row-closed {
+	opacity: 0.55;
+	text-decoration: line-through;
+}
+.beads-dep-id {
+	font-family: var(--font-monospace);
+	color: var(--text-muted);
+	flex: 0 0 auto;
+}
+.beads-dep-title {
+	color: var(--text-normal);
+	min-width: 0;
+	word-break: break-word;
+}
+/* Comments (read-only, markdown) */
+.beads-comment {
+	border-left: 2px solid var(--background-modifier-border);
+	padding: 1px 0 1px 10px;
+	margin: 8px 0;
+}
+.beads-comment-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	font-size: var(--font-smaller);
+	margin-bottom: 2px;
+}
+.beads-comment-author {
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+}
+.beads-comment-date {
+	font-family: var(--font-monospace);
+	color: var(--text-faint);
+}
+.beads-comment-body {
+	color: var(--text-normal);
+	word-break: break-word;
+}
+.beads-comment-body > :first-child {
+	margin-top: 0;
+}
+.beads-comment-body > :last-child {
+	margin-bottom: 0;
+}
+
+/* Quick-capture modal */
+.beads-capture-input {
+	width: 100%;
+	font-size: var(--font-ui-medium);
+	padding: 8px 10px;
+	margin-top: 4px;
+}
+.beads-capture-hint {
+	color: var(--text-muted);
+	font-size: var(--font-smaller);
+}
+.beads-capture-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+/* `beads` code block embed */
+.beads-embed {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	overflow: hidden;
+}
+.beads-embed-list {
+	display: flex;
+	flex-direction: column;
+}
+.beads-embed .beads-row:last-child {
+	border-bottom: none;
+}
+.beads-embed-error {
+	padding: 10px 12px;
+	color: var(--text-error);
+	white-space: pre-wrap;
+}
+
+/* Status bar */
+.beads-statusbar {
+	color: var(--text-muted);
+}
+
+/* Dependency graph tab */
+.beads-graph-pane {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	padding: 0;
+}
+.beads-graph-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 8px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+.beads-graph-title {
+	font-weight: var(--font-semibold);
+}
+.beads-graph-actions {
+	display: flex;
+	gap: 6px;
+}
+.beads-graph-canvas {
+	position: relative; /* anchors the popup's absolute left/top */
+	flex: 1;
+	min-height: 0;
+	width: 100%;
+	overflow: hidden;
+	background: var(--background-primary);
+}
+.beads-graph-svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	cursor: grab;
+	touch-action: none;
+}
+.beads-graph-svg:active {
+	cursor: grabbing;
+}
+/* Graphviz paints bd's status palette into each node; only the hit target and
+   the hover affordance are ours. */
+.beads-graph-svg g.node {
+	cursor: pointer;
+}
+.beads-graph-svg g.node:hover > polygon,
+.beads-graph-svg g.node:hover > ellipse,
+.beads-graph-svg g.node:hover > path {
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+}
+
+/* Epics tab — an epic header that expands in place into its own children. */
+.beads-epic {
+	display: flex;
+	flex-direction: column;
+}
+.beads-epic-head {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--size-4-1);
+	padding: var(--size-4-1) var(--size-4-2);
+	border-radius: var(--radius-s);
+	cursor: pointer;
+}
+.beads-epic-head:hover {
+	background: var(--background-modifier-hover);
+}
+.beads-epic-head.is-expanded .beads-title {
+	font-weight: var(--font-semibold);
+}
+.beads-epic-chevron {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	height: 18px;
+	color: var(--text-faint);
+}
+.beads-epic-chevron svg {
+	width: 14px;
+	height: 14px;
+}
+.beads-epic-progress-text {
+	color: var(--text-muted);
+}
+.beads-epic-eligible {
+	color: var(--color-green);
+}
+.beads-epic-bar {
+	height: 3px;
+	margin-top: 5px;
+	border-radius: 2px;
+	background: var(--background-modifier-border);
+	overflow: hidden;
+}
+.beads-epic-bar-fill {
+	height: 100%;
+	border-radius: 2px;
+	background: var(--text-accent);
+}
+
+/* Children are indented under their epic, with a hairline spine. */
+.beads-epic-children {
+	margin: 2px 0 8px var(--size-4-4);
+	padding-left: var(--size-4-2);
+	border-left: 1px solid var(--background-modifier-border);
+}
+.beads-epic-rollup {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+	padding: 2px var(--size-4-2) 6px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+.beads-epic-chip-in_progress {
+	color: var(--text-accent);
+}
+.beads-epic-chip-closed {
+	color: var(--text-faint);
+}
+
+/* Graph node-detail popover */
+.beads-graph-popup {
+	position: absolute;
+	z-index: 5;
+	width: 280px;
+	max-width: calc(100% - 24px);
+	max-height: calc(100% - 24px);
+	overflow-y: auto;
+	padding: 10px 12px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	box-shadow: var(--shadow-s);
+	/* Anchored at the click point; nudge up-left so the cursor lands inside it
+	   rather than at its corner, and keep it on-screen near pane edges. */
+	transform: translate(-12px, -12px);
+}
+.beads-graph-popup-head {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--size-4-2);
+}
+.beads-graph-popup-close {
+	flex: 0 0 auto;
+	font-size: 1.1em;
+	line-height: 1;
+}
+.beads-graph-popup-desc {
+	margin: 8px 0 10px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 160px;
+	overflow-y: auto;
+}
+.beads-graph-popup button.mod-cta {
+	width: 100%;
+}
+
+/* --- Work the bead ---------------------------------------------------- */
+
+/* Row affordance: hidden until the row is hovered/focused, like the graph
+   button, so the list stays quiet. */
+.beads-row .beads-work-btn {
+	flex: 0 0 auto;
+	opacity: 0;
+}
+.beads-row:hover .beads-work-btn,
+.beads-row .beads-work-btn:focus-visible {
+	opacity: 1;
+}
+
+.beads-work-note {
+	margin-bottom: var(--size-4-3);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+.beads-work-section {
+	margin: var(--size-4-3) 0 var(--size-4-1);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+.beads-work-command,
+.beads-work-prompt {
+	width: 100%;
+	resize: vertical;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.beads-work-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+	margin-top: var(--size-4-3);
+}
+.beads-work-term {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--size-4-1);
+}
+
+.beads-settings-harness .setting-item-control input[type="text"] {
+	min-width: 0;
+}
+.beads-settings-template {
+	width: 100%;
+	min-height: 200px;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+}
+
+/* Beads merge: section divider between the two settings halves. */
+.tat-settings-divider {
+	margin: 2em 0 1.5em;
+	border: none;
+	border-top: 1px solid var(--background-modifier-border);
+}

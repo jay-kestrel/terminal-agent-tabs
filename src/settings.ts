@@ -5,6 +5,7 @@ import { DEFAULT_TERMINAL_FONT_FAMILY } from './types';
 import { SPECIAL_CLI_ID_DEFAULT_SHELL } from './SessionManager';
 import { listGhosttyThemes } from './GhosttyThemeLoader';
 import { normalizeCliId } from './utils';
+import { renderBeadsSettings } from './beads/settings';
 
 function parseArgsInput(value: string): string[] {
 	return value
@@ -55,6 +56,20 @@ export class ClaudeCodeTabsSettingTab extends PluginSettingTab {
 		const profiles = this.plugin.settings.cliProfiles;
 
 		containerEl.empty();
+
+		// BEADS MERGE: one plugin gets one settings tab, but the two halves
+		// configure unrelated things (bd projects and prompts vs. terminal
+		// appearance and hooks). They are rendered as two clearly separated
+		// sections rather than being interleaved into a single flat list — a
+		// forced merge of unrelated fields would make both harder to scan.
+		renderBeadsSettings(
+			containerEl.createDiv({ cls: 'beads-settings-section' }),
+			this.plugin.beads,
+			() => this.display()
+		);
+
+		containerEl.createEl('hr', { cls: 'tat-settings-divider' });
+
 		new Setting(containerEl).setName('Agent CLI tabs').setHeading();
 
 		new Setting(containerEl)

@@ -66,6 +66,11 @@ export class ClaudeSessionView extends ItemView {
 	private codexSessionId: string | null = null;
 	// Launch config captured from a pending new-tab open (consumed synchronously in onOpen).
 	private pendingLaunchConfigCaptured: Partial<TabLaunchConfig> | null = null;
+	// Beads merge: a "Work the bead" tab is opened for one specific project
+	// directory and must always start a FRESH conversation — resuming whatever
+	// ran last in that repo would be a different bead. Captured from the same
+	// one-shot handoff as pendingLaunchConfigCaptured.
+	private pendingCwdCaptured: string | null = null;
 	private osc52Disposer: { dispose: () => void } | null = null;
 	private unsubscribeSessions: (() => void) | null = null;
 	private activityDotEl: HTMLElement | null = null;
@@ -238,6 +243,7 @@ export class ClaudeSessionView extends ItemView {
 		// onLayoutReady. On restore Obsidian calls onOpen BEFORE setState, so the restored
 		// cwd/cliId are only available after the workspace layout has been restored.
 		this.pendingLaunchConfigCaptured = this.plugin.consumePendingLaunchConfig();
+		this.pendingCwdCaptured = this.plugin.consumePendingSessionCwd();
 		this.tabLaunchConfig = this.resolveTabLaunchConfig();
 
 		const container = this.containerEl.children[1] as HTMLElement;
@@ -427,11 +433,17 @@ export class ClaudeSessionView extends ItemView {
 		if (this.isExited || !this.terminal) return;
 		// Recompute now that setState() has run on the restore path.
 		this.tabLaunchConfig = this.resolveTabLaunchConfig();
-		this.launchCwd = this.restoredCwd;
+		this.launchCwd = this.pendingCwdCaptured ?? this.restoredCwd;
 		this.updateDefaultHeaderFromConfig();
 
+		// Beads merge: a freshly primed bead tab is not a restore, even though it
+		// carries a cwd. Force a new conversation so the prompt we are about to
+		// type lands in an empty agent, not mid-way through an unrelated one.
+		const isPrimedLaunch = this.pendingCwdCaptured != null;
+		this.pendingCwdCaptured = null;
+
 		// Tier1 (Phase 2): a restored tab resumes its prior conversation when possible.
-		const isRestore = this.restoredCwd != null || this.resumeKey != null;
+		const isRestore = !isPrimedLaunch && (this.restoredCwd != null || this.resumeKey != null);
 		const startMode: StartMode = isRestore && this.canResumeRestoredSession() ? 'continue' : 'new';
 
 		// Phase 4: repaint the last screen only for sessions that won't redraw themselves.

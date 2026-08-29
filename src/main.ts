@@ -23,6 +23,8 @@ import {
 import { hookActivityEvent, preToolUseActivityEvent } from './AgentActivity';
 import { migrateCliProfiles, type LegacySettingsShape } from './SettingsMigration';
 import { trimLogFileIfOversized } from './HookLogMaintenance';
+import { BeadsFeature, type BeadsHost, type PrimedSessionRequest } from './beads/feature';
+import type { BeadsSettings } from './beads/settings';
 
 /** Electron shell/beep API exposed via window.require('electron') in Obsidian desktop */
 interface ElectronShellModule {
@@ -47,6 +49,10 @@ function sanitizeTerminalCustomGlyphs(value: unknown): boolean {
 	return DEFAULT_SETTINGS.terminalCustomGlyphs;
 }
 
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export default class ClaudeCodeTabsPlugin extends Plugin {
 	settings: ClaudeCodeTabsSettings;
 	sessionManager: SessionManager;
@@ -55,6 +61,15 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 	private hookEventMonitor: HookEventMonitor;
 	private dockBadge: DockBadge;
 	private pendingLaunchConfig: Partial<TabLaunchConfig> | null = null;
+	/** The beads half of the merged plugin. */
+	beads: BeadsFeature;
+	/** Raw persisted beads settings, folded back into data.json on save. */
+	private beadsPersisted: Partial<BeadsSettings> | null = null;
+	/**
+	 * cwd for the next tab opened by openPrimedAgentSession, consumed by the
+	 * view alongside pendingLaunchConfig. Mirrors that field's one-shot handoff.
+	 */
+	private pendingSessionCwd: string | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -253,7 +268,13 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 			})
 		);
 
-		// Add settings tab
+		// Beads merge: bring up the beads half before the shared settings tab, so
+		// the tab can render both sections. Registrations it makes go through the
+		// host, which means this plugin's own unload still tears them down.
+		this.beads = new BeadsFeature(this.beadsHost(), this.beadsPersisted);
+		this.beads.load();
+
+		// Add settings tab (both halves, two sections)
 		this.addSettingTab(new ClaudeCodeTabsSettingTab(this.app, this));
 		this.restartHookEventMonitor();
 
@@ -266,6 +287,7 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		this.beads?.unload();
 		this.hookEventMonitor.stop();
 		this.dockBadge.clear();
 		this.outputMonitor.destroy();
@@ -273,7 +295,13 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const loaded = ((await this.loadData()) || {}) as LegacySettingsShape;
+		const loaded = ((await this.loadData()) || {}) as LegacySettingsShape & {
+			beads?: Partial<BeadsSettings>;
+		};
+		// Beads merge: the two halves share one data.json. Beads settings live
+		// under a `beads` key so neither half's field names can shadow the
+		// other's, and so a future rename on one side cannot corrupt the other.
+		this.beadsPersisted = loaded.beads ?? null;
 		const cliProfiles = migrateCliProfiles(loaded);
 		const legacyDefault = loaded.defaultCliId;
 		const isSpecialDefault = legacyDefault === SPECIAL_CLI_ID_DEFAULT_SHELL;
@@ -340,7 +368,10 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+		await this.saveData({
+			...this.settings,
+			beads: this.beads ? this.beads.settings : this.beadsPersisted
+		});
 	}
 
 	getDefaultHookEventsFilePath(): string {
@@ -515,6 +546,100 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 		const pending = this.pendingLaunchConfig;
 		this.pendingLaunchConfig = null;
 		return pending;
+	}
+
+	consumePendingSessionCwd(): string | null {
+		const pending = this.pendingSessionCwd;
+		this.pendingSessionCwd = null;
+		return pending;
+	}
+
+	/**
+	 * BEADS MERGE — the in-process "Work the bead" path.
+	 *
+	 * Opens a session tab running `request.cliId` in `request.cwd`, then TYPES
+	 * `request.prompt` into that session's stdin. Deliberately WITHOUT a
+	 * trailing newline: the prompt lands in the agent's input box the way a
+	 * paste would, and the user reads it, edits it if they want, and presses
+	 * Enter themselves. Nothing here submits a prompt to an agent.
+	 *
+	 * The prompt goes to stdin, never to argv, so bead text is never shell- or
+	 * argument-parsed by anything.
+	 */
+	async openPrimedAgentSession(request: PrimedSessionRequest): Promise<void> {
+		this.pendingSessionCwd = request.cwd;
+		await this.openNewSession({
+			cliId: request.cliId,
+			additionalArgs: request.additionalArgs
+		});
+		const view = this.app.workspace.getActiveViewOfType(ClaudeSessionView);
+		if (!view) {
+			this.pendingSessionCwd = null;
+			throw new Error('Could not open a session tab.');
+		}
+		await this.primeSession(view.sessionId, request.prompt);
+	}
+
+	/**
+	 * Type `prompt` into a just-started session once its agent has painted
+	 * something, so the text lands in a ready input box rather than being eaten
+	 * by a TUI that is still initializing.
+	 *
+	 * Best-effort by nature: there is no portable "the agent is ready" signal
+	 * across arbitrary CLIs, so this waits for first output plus a short settle,
+	 * then writes. If the agent never produces output within the window the
+	 * write is skipped and the user is told, rather than blind-typing into an
+	 * unknown state.
+	 */
+	private async primeSession(sessionId: string, prompt: string): Promise<void> {
+		const READY_TIMEOUT_MS = 20_000;
+		const SETTLE_MS = 700;
+		const POLL_MS = 150;
+
+		const deadline = Date.now() + READY_TIMEOUT_MS;
+		for (;;) {
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || session.status === 'exited' || session.status === 'error') {
+				throw new Error('The session exited before the prompt could be sent.');
+			}
+			if (session.lastOutputLine) break;
+			if (Date.now() > deadline) {
+				new Notice(
+					'Beads: the session did not finish starting, so the prompt was not typed into it. It is still on your clipboard route — reopen the preview to copy it.'
+				);
+				return;
+			}
+			await sleep(POLL_MS);
+		}
+		await sleep(SETTLE_MS);
+		// No trailing newline. This types; it does not submit.
+		this.sessionManager.writeToSession(sessionId, prompt);
+		new Notice('Beads: prompt typed into the session — review it, then press Enter.');
+	}
+
+	/** CLI profiles offered as "Work the bead" session targets. */
+	listSessionTargets(): { id: string; displayName: string }[] {
+		return this.settings.cliProfiles.map((p) => ({
+			id: p.id,
+			displayName: p.displayName
+		}));
+	}
+
+	/** This plugin, viewed through the narrow surface BeadsFeature needs. */
+	private beadsHost(): BeadsHost {
+		return {
+			app: this.app,
+			saveSettings: () => this.saveSettings(),
+			registerView: (type, factory) => this.registerView(type, factory),
+			addRibbonIcon: (icon, title, cb) => this.addRibbonIcon(icon, title, cb),
+			addCommand: (command) => { this.addCommand(command); },
+			addStatusBarItem: () => this.addStatusBarItem(),
+			registerInterval: (id) => this.registerInterval(id),
+			registerMarkdownCodeBlockProcessor: (language, handler) =>
+				this.registerMarkdownCodeBlockProcessor(language, handler),
+			openPrimedAgentSession: (request) => this.openPrimedAgentSession(request),
+			listSessionTargets: () => this.listSessionTargets()
+		};
 	}
 
 	applyTerminalAppearanceToOpenSessions(options?: { resetFontSize?: boolean }): void {
