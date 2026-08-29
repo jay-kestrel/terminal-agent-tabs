@@ -242,6 +242,13 @@ export interface WorkTheBeadDeps {
 	 * WITHOUT submitting. Only ever called from an explicit button click.
 	 */
 	openPrimedSession: (request: PrimedSessionRequest) => Promise<void>;
+	/**
+	 * The same contract as `openPrimedSession`, except the caller mounts the
+	 * terminal in a pane it owns (the bead editor) instead of in a new tab.
+	 * Supplied only by callers that have such a pane; when absent the modal
+	 * simply does not offer the route.
+	 */
+	openInlineSession?: (request: PrimedSessionRequest) => Promise<void>;
 }
 
 /**
@@ -322,10 +329,11 @@ class WorkTheBeadModal extends Modal {
 		const command = buildCommand(this.harness, this.prompt);
 		const target = this.resolveSessionTarget();
 
+		const canInline = !!target && !!this.deps.openInlineSession;
 		contentEl.createDiv({
 			cls: "beads-work-note",
 			text: target
-				? `Nothing is submitted from Obsidian. Either copy the command and run it yourself, or open a ${target.displayName} session tab — that starts the agent in ${this.deps.projectName} and types the prompt into its input box, but you still press Enter.`
+				? `Nothing is submitted from Obsidian. Copy the command and run it yourself, or start a ${target.displayName} session${canInline ? " — here in this bead, or in its own tab" : " tab"}. Either session starts the agent in ${this.deps.projectName} and types the prompt into its input box, but you still press Enter.`
 				: "Nothing runs from Obsidian. Copy the command, open a terminal in the project, paste it, and press Enter yourself.",
 		});
 
@@ -344,33 +352,37 @@ class WorkTheBeadModal extends Modal {
 		const actions = contentEl.createDiv({ cls: "beads-work-actions" });
 
 		if (target) {
-			// The in-Obsidian route. `mod-cta` moves to this button because it is
-			// now the primary path, but it is still a second, explicit click on a
-			// modal the user had to open by picking a harness.
-			const sessionBtn = actions.createEl("button", {
-				cls: "beads-work-session mod-cta",
+			// The in-Obsidian routes. Both start the same session in the same
+			// directory with the same never-submitted prompt; they differ only in
+			// where the terminal is mounted. `mod-cta` sits on whichever is the
+			// more contextual one, but either way this is a second, explicit
+			// click on a modal the user had to open by picking a harness.
+			const request = (): PrimedSessionRequest => ({
+				cliId: target.id,
+				cwd: this.deps.opts.cwd,
+				additionalArgs: splitArgs(this.harness.sessionArgs),
+				// No trailing newline: this types, it does not submit.
+				prompt: this.prompt,
+				title: `${this.issue.id} · ${this.harness.name}`,
 			});
-			setIcon(sessionBtn.createSpan(), "terminal-square");
-			sessionBtn.createSpan({ text: `Open ${target.displayName} session tab` });
-			sessionBtn.onclick = () => {
-				sessionBtn.disabled = true;
-				this.deps
-					.openPrimedSession({
-						cliId: target.id,
-						cwd: this.deps.opts.cwd,
-						additionalArgs: splitArgs(this.harness.sessionArgs),
-						// No trailing newline: this types, it does not submit.
-						prompt: this.prompt,
-						title: `${this.issue.id} · ${this.harness.name}`,
-					})
-					.then(
-						() => this.close(),
-						(e: Error) => {
-							sessionBtn.disabled = false;
-							new Notice(`Beads: ${e.message}`);
-						},
-					);
-			};
+
+			const inline = this.deps.openInlineSession;
+			if (inline) {
+				this.sessionButton(
+					actions,
+					"beads-work-inline mod-cta",
+					"panel-bottom",
+					`Run ${target.displayName} in this bead`,
+					() => inline(request()),
+				);
+			}
+			this.sessionButton(
+				actions,
+				inline ? "beads-work-session" : "beads-work-session mod-cta",
+				"terminal-square",
+				`Open ${target.displayName} session tab`,
+				() => this.deps.openPrimedSession(request()),
+			);
 		}
 
 		this.copyButton(actions, "Copy command", command, !target);
@@ -395,6 +407,33 @@ class WorkTheBeadModal extends Modal {
 		const id = this.harness.sessionCliId?.trim();
 		if (!id) return null;
 		return this.deps.sessionTargets.find((t) => t.id === id) ?? null;
+	}
+
+	/**
+	 * One of the two session routes. Disabled while its promise is in flight so
+	 * a double-click cannot start two agents, and re-enabled on failure so the
+	 * user can retry or fall back to copying.
+	 */
+	private sessionButton(
+		parent: HTMLElement,
+		cls: string,
+		icon: string,
+		label: string,
+		run: () => Promise<void>,
+	): void {
+		const btn = parent.createEl("button", { cls });
+		setIcon(btn.createSpan(), icon);
+		btn.createSpan({ text: label });
+		btn.onclick = () => {
+			btn.disabled = true;
+			run().then(
+				() => this.close(),
+				(e: Error) => {
+					btn.disabled = false;
+					new Notice(`Beads: ${e.message}`);
+				},
+			);
+		};
 	}
 
 	private copyButton(

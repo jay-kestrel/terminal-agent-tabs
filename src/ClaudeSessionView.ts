@@ -1,9 +1,8 @@
 import { ItemView, WorkspaceLeaf, Menu, Modal, App, Notice, ViewStateResult } from 'obsidian';
 import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { WebglAddon } from '@xterm/addon-webgl';
+import type { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
+import { createTerminalInstance, visibleTerminalText } from './TerminalPane';
 import type ClaudeCodeTabsPlugin from './main';
 import type { StartMode, TabLaunchConfig } from './types';
 import { OscParser, parseTitleActivity } from './OscParser';
@@ -102,19 +101,6 @@ export class ClaudeSessionView extends ItemView {
 
 	getIcon(): string {
 		return 'terminal';
-	}
-
-	/** Snapshot the active bottom screen so TUI cursor movement cannot leave stale raw lines. */
-	private getVisibleTerminalText(): string {
-		if (!this.terminal) return '';
-		const buffer = this.terminal.buffer.active;
-		const start = buffer.baseY;
-		const end = Math.min(buffer.length, start + this.terminal.rows);
-		const lines: string[] = [];
-		for (let index = start; index < end; index++) {
-			lines.push(buffer.getLine(index)?.translateToString(true) ?? '');
-		}
-		return lines.join('\n');
 	}
 
 	// Obsidian serializes getState() into workspace.json and replays it through
@@ -255,49 +241,13 @@ export class ClaudeSessionView extends ItemView {
 		this.statusContainer = container.createDiv({ cls: 'claude-session-status is-hidden' });
 
 		this.debugEnabled = this.isDebugEnabled();
-		this.terminal = new Terminal({
-			fontFamily: this.plugin.settings.terminalFontFamily,
-			fontSize: this.plugin.settings.defaultFontSize,
-			lineHeight: 1.0,
-			letterSpacing: 0,
-			customGlyphs: this.plugin.settings.terminalCustomGlyphs,
-			rescaleOverlappingGlyphs: !this.plugin.settings.terminalCustomGlyphs,
-			scrollback: 1000,
-			cursorBlink: true,
-			allowProposedApi: true,
-			cancelEvents: true,
-			macOptionIsMeta: true,
-			theme: buildTerminalTheme(this.plugin.settings.terminalThemeName)
-		});
-
-		this.fitAddon = new FitAddon();
-		this.terminal.loadAddon(this.fitAddon);
-
-		try {
-			const unicodeAddon = new Unicode11Addon();
-			this.terminal.loadAddon(unicodeAddon);
-			this.terminal.unicode.activeVersion = '11';
-		} catch (e) {
-			console.debug('[TerminalAgentTabs] Unicode11 addon could not be loaded:', e);
-		}
-
-		this.terminal.open(this.terminalContainer);
-
-		// Pressing Escape in the terminal appears to blur it and hand focus
-		// elsewhere in Obsidian. xterm already stops the Escape keydown from
-		// bubbling on its own, but not the keyup — stop that here too, on the
-		// chance Obsidian's keymap reacts to it. Returning true keeps xterm's
-		// own handling intact so the CLI underneath still receives the Esc
-		// byte (its interrupt key).
-		this.terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				event.stopPropagation();
-			}
-			return true;
-		});
+		// Terminal construction (options, addons, Escape handling, renderer) is
+		// shared with the embedded bead-editor pane — see TerminalPane.ts.
+		const { terminal, fitAddon } = createTerminalInstance(this.plugin.settings, this.terminalContainer);
+		this.terminal = terminal;
+		this.fitAddon = fitAddon;
 
 		this.registerOsc52ClipboardSync();
-		this.loadWebglRenderer();
 		this.loadSerializeAddon();
 
 		this.fitAddon.fit();
@@ -511,20 +461,6 @@ export class ClaudeSessionView extends ItemView {
 
 		this.plugin.outputMonitor.removeSession(this.sessionId);
 		await this.plugin.sessionManager.terminateSession(this.sessionId);
-	}
-
-	private loadWebglRenderer(): void {
-		if (!this.terminal) return;
-		try {
-			const webglAddon = new WebglAddon();
-			webglAddon.onContextLoss(() => {
-				// Fall back to canvas renderer if WebGL context is lost
-				webglAddon.dispose();
-			});
-			this.terminal.loadAddon(webglAddon);
-		} catch (e) {
-			console.debug('[TerminalAgentTabs] WebGL renderer not available, using canvas fallback:', e);
-		}
 	}
 
 	focusTerminal(): void {
@@ -923,7 +859,7 @@ export class ClaudeSessionView extends ItemView {
 						// Feed output monitor for pattern detection and last-line tracking
 						this.plugin.outputMonitor.feed(this.sessionId, data, {
 							profile: this.plugin.sessionManager.getOutputDetectionProfile(this.sessionId),
-							getVisibleText: () => this.getVisibleTerminalText(),
+							getVisibleText: () => visibleTerminalText(this.terminal),
 						});
 						const lastLine = this.plugin.outputMonitor.getLastLine(this.sessionId);
 						if (lastLine) {

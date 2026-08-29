@@ -7,7 +7,11 @@ import {
 } from "obsidian";
 import { existsSync } from "fs";
 import { join } from "path";
-import type { BeadsFeature as BeadsPlugin } from "./feature";
+import type {
+	BeadsFeature as BeadsPlugin,
+	InlineAgentSession,
+	PrimedSessionRequest,
+} from "./feature";
 import { activeOptions } from "./settings";
 import {
 	BeadIssue,
@@ -63,6 +67,13 @@ export class BeadEditorView extends ItemView {
 	private saveBtn: HTMLButtonElement | null = null;
 	private revertBtn: HTMLButtonElement | null = null;
 
+	// The bead body and the agent pane are SIBLINGS, not nested: render() empties
+	// its own root on every reload/revert, and a terminal inside that root would
+	// be destroyed (and its process orphaned) by an unrelated edit.
+	private bodyEl: HTMLElement | null = null;
+	private paneEl: HTMLElement | null = null;
+	private agent: InlineAgentSession | null = null;
+
 	constructor(
 		leaf: WorkspaceLeaf,
 		private plugin: BeadsPlugin,
@@ -111,9 +122,88 @@ export class BeadEditorView extends ItemView {
 		else this.message("Loading…");
 	}
 
-	onClose(): Promise<void> {
+	async onClose(): Promise<void> {
+		// Kill the embedded agent before the DOM goes away, so closing the tab
+		// cannot leave an orphaned PTY behind.
+		await this.closeAgent();
 		this.contentEl.empty();
-		return Promise.resolve();
+		this.bodyEl = null;
+		this.paneEl = null;
+	}
+
+	onResize(): void {
+		// The pane's own ResizeObserver covers most cases; this catches the
+		// leaf-level resizes Obsidian reports directly to the view.
+		this.agent?.fit();
+	}
+
+	// --- agent pane ------------------------------------------------------
+
+	/**
+	 * The two-part layout: a scrolling bead body plus an agent pane pinned below
+	 * it. Built lazily because setState (which triggers reload -> render) can
+	 * land before onOpen.
+	 */
+	private ensureShell(): HTMLElement {
+		if (this.bodyEl?.isConnected) return this.bodyEl;
+		const root = this.contentEl;
+		root.empty();
+		root.addClass("beads-editor-shell");
+		this.bodyEl = root.createDiv();
+		this.paneEl = root.createDiv({ cls: "beads-agent-pane beads-hidden" });
+		return this.bodyEl;
+	}
+
+	/**
+	 * Start an agent in the pane below this bead. Reached only from the "Work
+	 * the bead" preview modal, which means: an explicit click on the button, an
+	 * explicit choice of harness, and an explicit second click on a modal that
+	 * shows the exact prompt. The prompt is typed into the agent's input without
+	 * a trailing newline — the user still presses Enter. See `harness.ts`.
+	 */
+	private async startAgent(request: PrimedSessionRequest): Promise<void> {
+		await this.closeAgent();
+		const pane = this.paneEl;
+		if (!pane) throw new Error("The bead editor is not ready.");
+
+		pane.empty();
+		pane.removeClass("beads-hidden");
+
+		const bar = pane.createDiv({ cls: "beads-agent-bar" });
+		const label = bar.createDiv({ cls: "beads-agent-title", text: request.title });
+		const closeBtn = bar.createEl("button", {
+			cls: "beads-agent-close",
+			text: "Close agent",
+		});
+		closeBtn.onclick = () => void this.closeAgent();
+		const host = pane.createDiv({ cls: "beads-agent-terminal" });
+
+		try {
+			this.agent = this.plugin.mountInlineAgentSession(host, request);
+		} catch (e) {
+			this.hideAgentPane();
+			throw e instanceof Error ? e : new Error(String(e));
+		}
+		const agent = this.agent;
+		agent.primed.then(
+			() => agent.focus(),
+			(e: Error) => {
+				label.setText(`${request.title} — ${e.message}`);
+				new Notice(`Beads: ${e.message}`);
+			},
+		);
+	}
+
+	private async closeAgent(): Promise<void> {
+		const agent = this.agent;
+		this.agent = null;
+		if (agent) await agent.dispose();
+		this.hideAgentPane();
+	}
+
+	private hideAgentPane(): void {
+		this.paneEl?.empty();
+		this.paneEl?.addClass("beads-hidden");
 	}
 
 	private resolveOpts(): BdOptions | null {
@@ -124,7 +214,7 @@ export class BeadEditorView extends ItemView {
 	}
 
 	private message(text: string, isError = false): void {
-		const root = this.contentEl;
+		const root = this.ensureShell();
 		root.empty();
 		root.addClass("beads-editor");
 		root.createDiv({
@@ -175,7 +265,7 @@ export class BeadEditorView extends ItemView {
 		const creating = this.creating && !this.issue;
 		const issue = this.issue;
 		if (!creating && !issue) return;
-		const root = this.contentEl;
+		const root = this.ensureShell();
 		root.empty();
 		root.addClass("beads-editor");
 
@@ -207,7 +297,10 @@ export class BeadEditorView extends ItemView {
 				text: "Work the bead",
 			});
 			workBtn.onclick = (e) => {
-				if (this.issue) this.plugin.workBead(this.issue, e);
+				if (!this.issue) return;
+				// The extra argument is what makes the preview modal offer the
+				// "run it here" route on top of its existing tab/copy routes.
+				this.plugin.workBead(this.issue, e, (request) => this.startAgent(request));
 			};
 			this.revertBtn = actions.createEl("button", { text: "Revert" });
 			this.saveBtn = actions.createEl("button", { cls: "mod-cta", text: "Save" });

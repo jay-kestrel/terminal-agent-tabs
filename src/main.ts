@@ -23,7 +23,8 @@ import {
 import { hookActivityEvent, preToolUseActivityEvent } from './AgentActivity';
 import { migrateCliProfiles, type LegacySettingsShape } from './SettingsMigration';
 import { trimLogFileIfOversized } from './HookLogMaintenance';
-import { BeadsFeature, type BeadsHost, type PrimedSessionRequest } from './beads/feature';
+import { BeadsFeature, type BeadsHost, type InlineAgentSession, type PrimedSessionRequest } from './beads/feature';
+import { TerminalPane } from './TerminalPane';
 import type { BeadsSettings } from './beads/settings';
 
 /** Electron shell/beep API exposed via window.require('electron') in Obsidian desktop */
@@ -581,6 +582,41 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 	}
 
 	/**
+	 * BEADS MERGE — the EMBEDDED variant of the same flow.
+	 *
+	 * Identical in every respect that matters to the tab flow above (fresh
+	 * session, bead's project directory, prompt TYPED into stdin with no
+	 * trailing newline, user presses Enter) except that the terminal is mounted
+	 * into `container` — an element owned by the bead editor — instead of into a
+	 * workspace tab of its own. `openPrimedAgentSession` is untouched and is
+	 * still what the "Open session tab" button calls.
+	 *
+	 * Throws synchronously if the session could not be spawned; the returned
+	 * `primed` promise rejects if the prompt could not be typed.
+	 */
+	mountInlineAgentSession(container: HTMLElement, request: PrimedSessionRequest): InlineAgentSession {
+		const pane = new TerminalPane(this, container, {
+			onTitle: (title) => this.sessionManager.updateSessionHeader(pane.sessionId, title)
+		});
+		try {
+			pane.start({
+				cliId: request.cliId,
+				additionalArgs: request.additionalArgs,
+				cwd: request.cwd
+			});
+		} catch (error) {
+			void pane.dispose();
+			throw error instanceof Error ? error : new Error(String(error));
+		}
+		return {
+			focus: () => pane.focus(),
+			fit: () => pane.fit(),
+			dispose: () => pane.dispose(),
+			primed: this.primeSession(pane.sessionId, request.prompt)
+		};
+	}
+
+	/**
 	 * Type `prompt` into a just-started session once its agent has painted
 	 * something, so the text lands in a ready input box rather than being eaten
 	 * by a TUI that is still initializing.
@@ -638,6 +674,8 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 			registerMarkdownCodeBlockProcessor: (language, handler) =>
 				this.registerMarkdownCodeBlockProcessor(language, handler),
 			openPrimedAgentSession: (request) => this.openPrimedAgentSession(request),
+			mountInlineAgentSession: (container, request) =>
+				this.mountInlineAgentSession(container, request),
 			listSessionTargets: () => this.listSessionTargets()
 		};
 	}

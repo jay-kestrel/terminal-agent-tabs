@@ -1254,10 +1254,75 @@ select.beads-prop-input {
 	gap: var(--size-4-2);
 	margin-top: var(--size-4-3);
 }
-.beads-work-term {
+.beads-work-term,
+.beads-work-session,
+.beads-work-inline {
 	display: inline-flex;
 	align-items: center;
 	gap: var(--size-4-1);
+}
+
+/*
+ * Bead editor agent pane — a live agent terminal below the bead it is about.
+ * The editor's content element becomes a two-row flex column: the bead body
+ * scrolls, the pane is pinned under it and is user-resizable. The terminal
+ * itself reuses .claude-terminal (created by TerminalPane), so xterm's layout
+ * stays defined in exactly one place.
+ */
+.beads-hidden {
+	display: none !important;
+}
+.workspace-leaf-content[data-type="beads-editor"] .view-content {
+	padding: 0;
+}
+.beads-editor-shell {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+}
+.beads-editor-shell > :first-child {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+}
+.beads-agent-pane {
+	flex: 0 0 auto;
+	display: flex;
+	flex-direction: column;
+	height: 45%;
+	min-height: 120px;
+	overflow: hidden;
+	resize: vertical;
+	border-top: 1px solid var(--background-modifier-border);
+	background-color: var(--background-primary);
+}
+.beads-agent-bar {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) var(--size-4-3);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+.beads-agent-title {
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.beads-agent-close {
+	flex: 0 0 auto;
+	font-size: var(--font-ui-smaller);
+}
+.beads-agent-terminal {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	overflow: hidden;
 }
 
 .beads-settings-harness .setting-item-control input[type="text"] {

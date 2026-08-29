@@ -57,8 +57,35 @@ export interface BeadsHost {
 	 * primed (but NOT submitted) with `prompt`. See `main.ts`.
 	 */
 	openPrimedAgentSession(request: PrimedSessionRequest): Promise<void>;
+	/**
+	 * The same flow, embedded: start the agent inside `container` (an element
+	 * the caller owns and tears down) instead of in a workspace tab. Used by the
+	 * bead editor's agent pane. Throws if the session could not be spawned.
+	 */
+	mountInlineAgentSession(
+		container: HTMLElement,
+		request: PrimedSessionRequest,
+	): InlineAgentSession;
 	/** CLI profile ids/names available for session tabs, for the harness menu. */
 	listSessionTargets(): { id: string; displayName: string }[];
+}
+
+/**
+ * Handle to an agent terminal embedded in a beads view. Declared here rather
+ * than imported from the host so this module stays a leaf of the beads subtree;
+ * the host satisfies it structurally.
+ */
+export interface InlineAgentSession {
+	focus(): void;
+	/** Re-fit the terminal to its container after a layout change. */
+	fit(): void;
+	/** Terminate the process and unmount the terminal. */
+	dispose(): Promise<void>;
+	/**
+	 * Resolves once the prompt has been TYPED into the agent's input — never
+	 * submitted. Rejects if the session died before that could happen.
+	 */
+	primed: Promise<void>;
 }
 
 export interface PrimedSessionRequest {
@@ -256,8 +283,17 @@ export class BeadsFeature {
 	 * MERGED-PLUGIN CHANGE: the preview now also offers "Open session tab",
 	 * which starts the agent in this plugin's own PTY session and TYPES the
 	 * prompt into it without submitting. See `harness.ts`.
+	 *
+	 * `openInlineSession` is supplied only by callers that have somewhere to put
+	 * a terminal of their own (the bead editor). When present the preview offers
+	 * a third route that runs the agent there instead of in a new tab; the
+	 * prompt handling is identical either way.
 	 */
-	workBead(issue: BeadIssue, event: MouseEvent): void {
+	workBead(
+		issue: BeadIssue,
+		event: MouseEvent,
+		openInlineSession?: (request: PrimedSessionRequest) => Promise<void>,
+	): void {
 		const opts = activeOptions(this.settings);
 		const project = activeProject(this.settings);
 		if (!opts || !project) {
@@ -272,7 +308,16 @@ export class BeadsFeature {
 			harnesses: this.settings.harnesses,
 			sessionTargets: this.sessionTargets(),
 			openPrimedSession: (request) => this.host.openPrimedAgentSession(request),
+			openInlineSession,
 		});
+	}
+
+	/** Pass-through so views can embed an agent terminal (see `editor.ts`). */
+	mountInlineAgentSession(
+		container: HTMLElement,
+		request: PrimedSessionRequest,
+	): InlineAgentSession {
+		return this.host.mountInlineAgentSession(container, request);
 	}
 
 	/** Look up a harness profile by id (used by the settings section). */
