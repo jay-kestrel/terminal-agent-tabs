@@ -1,6 +1,11 @@
-export const VIEW_TYPE_BEADS = "beads-pane";
-export const VIEW_TYPE_BEADS_EDITOR = "beads-editor";
-export const VIEW_TYPE_BEADS_GRAPH = "beads-graph";
+// Namespaced (not just "beads-pane" etc.) because Obsidian's view-type
+// registry is global across ALL installed plugins, not per-plugin — the
+// unmerged obsidian-beads plugin registers those exact bare strings, and a
+// second registerView() for an already-taken type throws, which is what
+// crashed this plugin's onload() the first time both were enabled together.
+export const VIEW_TYPE_BEADS = "beads-agent-tabs-pane";
+export const VIEW_TYPE_BEADS_EDITOR = "beads-agent-tabs-editor";
+export const VIEW_TYPE_BEADS_GRAPH = "beads-agent-tabs-graph";
 
 /** Common issue types offered in the capture / edit dropdowns. */
 export const ISSUE_TYPES = [
