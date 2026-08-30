@@ -331,6 +331,7 @@ class WorkTheBeadModal extends Modal {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("beads-work");
+		this.modalEl.addClass("beads-work-modal"); // wider dialog — the default width crowds two editable textareas
 		this.titleEl.setText(`Work ${this.issue.id} with ${this.harness.name}`);
 
 		const command = buildCommand(this.harness, this.prompt);
@@ -347,14 +348,12 @@ class WorkTheBeadModal extends Modal {
 		contentEl.createDiv({ cls: "beads-work-section", text: "Command" });
 		const cmdBox = contentEl.createEl("textarea", { cls: "beads-work-command" });
 		cmdBox.value = command;
-		cmdBox.readOnly = true;
-		cmdBox.rows = 4;
+		cmdBox.rows = 6;
 
 		contentEl.createDiv({ cls: "beads-work-section", text: "Prompt" });
 		const promptBox = contentEl.createEl("textarea", { cls: "beads-work-prompt" });
 		promptBox.value = this.prompt;
-		promptBox.readOnly = true;
-		promptBox.rows = 12;
+		promptBox.rows = 18;
 
 		const actions = contentEl.createDiv({ cls: "beads-work-actions" });
 
@@ -368,8 +367,10 @@ class WorkTheBeadModal extends Modal {
 				cliId: target.id,
 				cwd: this.deps.opts.cwd,
 				additionalArgs: splitArgs(this.harness.sessionArgs),
-				// No trailing newline: this types, it does not submit.
-				prompt: this.prompt,
+				// No trailing newline: this types, it does not submit. Reads the
+				// box's current text, so an edit the user made here is what
+				// actually gets typed — not the originally generated prompt.
+				prompt: promptBox.value,
 				title: `${this.issue.id} · ${this.harness.name}`,
 			});
 
@@ -392,8 +393,8 @@ class WorkTheBeadModal extends Modal {
 			);
 		}
 
-		this.copyButton(actions, "Copy command", command, !target);
-		this.copyButton(actions, "Copy prompt only", this.prompt, false);
+		this.copyButton(actions, "Copy command", () => cmdBox.value, !target);
+		this.copyButton(actions, "Copy prompt only", () => promptBox.value, false);
 
 		const termBtn = actions.createEl("button", { cls: "beads-work-term" });
 		setIcon(termBtn.createSpan(), "terminal");
@@ -443,15 +444,16 @@ class WorkTheBeadModal extends Modal {
 		};
 	}
 
+	/** `getText` reads live at click time, so an edit to the box is what's copied. */
 	private copyButton(
 		parent: HTMLElement,
 		label: string,
-		text: string,
+		getText: () => string,
 		cta: boolean,
 	): void {
-		const btn = parent.createEl("button", { text, cls: cta ? "mod-cta" : "" });
+		const btn = parent.createEl("button", { text: label, cls: cta ? "mod-cta" : "" });
 		btn.onclick = () => {
-			navigator.clipboard.writeText(text).then(
+			navigator.clipboard.writeText(getText()).then(
 				() => new Notice(`Beads: ${label.toLowerCase()} — copied.`),
 				() => new Notice("Beads: could not write to the clipboard."),
 			);

@@ -1237,6 +1237,11 @@ select.beads-prop-input {
 	opacity: 1;
 }
 
+/* Wider dialog: two editable textareas need more room than Obsidian's
+   default modal width, and it needs to stay usable on smaller screens. */
+.beads-work-modal {
+	width: min(90vw, 760px);
+}
 .beads-work-note {
 	margin-bottom: var(--size-4-3);
 	color: var(--text-muted);
