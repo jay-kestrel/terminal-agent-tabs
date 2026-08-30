@@ -38,6 +38,8 @@ interface EditorState {
 	create?: boolean;
 	/** Pre-set + locked parent for a new bead (e.g. "Add child" from an epic). */
 	parent?: string;
+	/** Pre-set + locked "blocked by" for a new bead (e.g. "Add follow-up" from any bead). */
+	blockedBy?: string;
 }
 
 /** The editable snapshot of a bead's fields. */
@@ -64,6 +66,8 @@ export class BeadEditorView extends ItemView {
 	private creating = false;
 	/** Set only when creating: the parent this new bead will be linked under. */
 	private parent: string | null = null;
+	/** Set only when creating: the bead that must close before this one is ready. */
+	private blockedBy: string | null = null;
 	private loadSeq = 0;
 
 	private model: EditModel = blankModel();
@@ -102,6 +106,7 @@ export class BeadEditorView extends ItemView {
 			id: this.id ?? undefined,
 			create: this.creating && !this.id ? true : undefined,
 			parent: this.parent ?? undefined,
+			blockedBy: this.blockedBy ?? undefined,
 		};
 	}
 
@@ -109,6 +114,7 @@ export class BeadEditorView extends ItemView {
 		if (state && typeof state.id === "string") this.id = state.id;
 		if (state && state.create) this.creating = true;
 		if (state && typeof state.parent === "string") this.parent = state.parent;
+		if (state && typeof state.blockedBy === "string") this.blockedBy = state.blockedBy;
 		await super.setState(state, result);
 		await this.reload();
 	}
@@ -283,7 +289,13 @@ export class BeadEditorView extends ItemView {
 		const bar = root.createDiv({ cls: "beads-editor-bar" });
 		bar.createDiv({
 			cls: "beads-editor-id",
-			text: issue ? issue.id : creating && this.parent ? `New bead · child of ${this.parent}` : "New bead",
+			text: issue
+				? issue.id
+				: creating && this.parent
+					? `New bead · child of ${this.parent}`
+					: creating && this.blockedBy
+						? `New bead · blocked by ${this.blockedBy}`
+						: "New bead",
 		});
 		const actions = bar.createDiv({ cls: "beads-editor-actions" });
 		if (creating) {
@@ -565,6 +577,7 @@ export class BeadEditorView extends ItemView {
 				assignee: this.model.assignee.trim() || undefined,
 				labels: this.model.labels.length ? this.model.labels : undefined,
 				parent: this.parent ?? undefined,
+				blockedBy: this.blockedBy ?? undefined,
 			});
 			new Notice(`Beads: created ${id}`);
 			this.plugin.refreshViews();

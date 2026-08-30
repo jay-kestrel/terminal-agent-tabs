@@ -533,7 +533,8 @@ export class BeadsView extends ItemView {
 				onToggle: (id) => this.toggleEpic(id),
 				onOpen: (i) => this.openBead(i),
 				onGraph: (i) => void this.plugin.openGraph({ id: i.id }),
-				onAddChild: (i) => void this.plugin.newBead(i.id),
+				onAddChild: (i) => void this.plugin.newBead({ parent: i.id }),
+				onAddDependent: (i) => void this.plugin.newBead({ blockedBy: i.id }),
 			});
 			return;
 		}
@@ -574,7 +575,8 @@ export class BeadsView extends ItemView {
 				showDeps: this.active === "blocked",
 				onGraph: (i) => void this.plugin.openGraph({ id: i.id }),
 				onWork: (i, e) => this.plugin.workBead(i, e),
-				onAddChild: (i) => void this.plugin.newBead(i.id),
+				onAddChild: (i) => void this.plugin.newBead({ parent: i.id }),
+				onAddDependent: (i) => void this.plugin.newBead({ blockedBy: i.id }),
 			});
 		}
 

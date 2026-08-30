@@ -409,7 +409,14 @@ export class BeadsGraphView extends ItemView {
 			const addChildBtn = actions.createEl("button", { text: "Add child" });
 			addChildBtn.onclick = () => {
 				this.closePopup();
-				void this.plugin.newBead(issue.id);
+				void this.plugin.newBead({ parent: issue.id });
+			};
+		}
+		if (issue.status !== "closed") {
+			const addDepBtn = actions.createEl("button", { text: "Add follow-up" });
+			addDepBtn.onclick = () => {
+				this.closePopup();
+				void this.plugin.newBead({ blockedBy: issue.id });
 			};
 		}
 		const openBtn = actions.createEl("button", { cls: "mod-cta", text: "Open" });

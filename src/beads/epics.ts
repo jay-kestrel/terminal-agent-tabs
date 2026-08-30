@@ -53,6 +53,8 @@ export interface EpicsHandlers {
 	onGraph: (issue: BeadIssue) => void;
 	/** Open a new-bead form pre-linked as this epic's child. */
 	onAddChild: (issue: BeadIssue) => void;
+	/** Open a new-bead form pre-linked as blocked by this bead. */
+	onAddDependent: (issue: BeadIssue) => void;
 }
 
 function countByStatus(children: BeadIssue[]): Map<string, number> {
@@ -135,6 +137,18 @@ function renderEpicHead(
 		handlers.onAddChild(epic);
 	};
 
+	if (epic.status !== "closed") {
+		const depBtn = head.createEl("button", {
+			cls: "clickable-icon beads-add-dependent-btn",
+			attr: { "aria-label": "Add follow-up bead (blocked by this one)" },
+		});
+		setIcon(depBtn, "corner-down-right");
+		depBtn.onclick = (e) => {
+			e.stopPropagation();
+			handlers.onAddDependent(epic);
+		};
+	}
+
 	head.onclick = () => handlers.onToggle(epic.id);
 }
 
@@ -197,6 +211,7 @@ export function renderEpics(
 				onOpen: (i) => handlers.onOpen(i),
 				onGraph: (i) => handlers.onGraph(i),
 				onAddChild: (i) => handlers.onAddChild(i),
+				onAddDependent: (i) => handlers.onAddDependent(i),
 			});
 		}
 	}

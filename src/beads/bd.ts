@@ -347,6 +347,8 @@ export interface BdCreateFields {
 	labels?: string[];
 	/** Parent issue id — bd links this as a hierarchical child. */
 	parent?: string;
+	/** Issue id that must close before this new one is ready — a plain "blocks" dependency, not hierarchy. */
+	blockedBy?: string;
 }
 
 /**
@@ -368,6 +370,7 @@ export async function bdCreate(
 	if (f.assignee) args.push(`--assignee=${f.assignee}`);
 	if (f.labels && f.labels.length) args.push(`--labels=${f.labels.join(",")}`);
 	if (f.parent) args.push(`--parent=${f.parent}`);
+	if (f.blockedBy) args.push(`--deps=blocks:${f.blockedBy}`);
 	args.push("--json");
 	const { stdout } = await run(args, opts);
 	invalidateReadCache();

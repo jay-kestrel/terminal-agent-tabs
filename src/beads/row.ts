@@ -20,6 +20,8 @@ export interface RowHandlers {
 	onWork?: (issue: BeadIssue, event: MouseEvent) => void;
 	/** Epic rows only: open a new-bead form pre-linked as this epic's child. */
 	onAddChild?: (issue: BeadIssue) => void;
+	/** Any row: open a new-bead form pre-linked as blocked by this bead ("don't forget X after this"). */
+	onAddDependent?: (issue: BeadIssue) => void;
 }
 
 /** A small colored priority dot (native-restrained) with the label on hover. */
@@ -94,6 +96,18 @@ export function renderIssueRow(
 		addBtn.onclick = (e) => {
 			e.stopPropagation();
 			handlers.onAddChild?.(issue);
+		};
+	}
+
+	if (handlers.onAddDependent && issue.status !== "closed") {
+		const depBtn = row.createEl("button", {
+			cls: "clickable-icon beads-add-dependent-btn",
+			attr: { "aria-label": "Add follow-up bead (blocked by this one)" },
+		});
+		setIcon(depBtn, "corner-down-right");
+		depBtn.onclick = (e) => {
+			e.stopPropagation();
+			handlers.onAddDependent?.(issue);
 		};
 	}
 
