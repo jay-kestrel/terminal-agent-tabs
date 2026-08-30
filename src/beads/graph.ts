@@ -1,11 +1,11 @@
-import { ItemView, WorkspaceLeaf } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice } from "obsidian";
 import { existsSync } from "fs";
 import { join } from "path";
 import { instance as vizInstance } from "@viz-js/viz";
 import type { BeadsFeature as BeadsPlugin } from "./feature";
 import { activeOptions } from "./settings";
-import { VIEW_TYPE_BEADS_GRAPH, BeadIssue } from "./types";
-import { bdGraphDot, bdShow, BdError, BdOptions } from "./bd";
+import { VIEW_TYPE_BEADS_GRAPH, BeadIssue, EDITABLE_STATUSES } from "./types";
+import { bdGraphDot, bdShow, bdUpdate, BdError, BdOptions } from "./bd";
 import { renderPriorityDot } from "./row";
 
 /**
@@ -379,22 +379,62 @@ export class BeadsGraphView extends ItemView {
 		main.createDiv({ cls: "beads-title", text: issue.title });
 		const meta = main.createDiv({ cls: "beads-meta" });
 		meta.createSpan({ cls: "beads-id", text: issue.id });
-		meta.createSpan({ cls: "beads-status", text: issue.status });
-		const closeBtn = head.createEl("button", {
+		const closeXBtn = head.createEl("button", {
 			cls: "clickable-icon beads-graph-popup-close",
 			attr: { "aria-label": "Close" },
 		});
-		closeBtn.setText("×");
-		closeBtn.onclick = () => this.closePopup();
+		closeXBtn.setText("×");
+		closeXBtn.onclick = () => this.closePopup();
+
+		// Status is editable right here — the same field/values as the full
+		// editor's Status dropdown (bdUpdate), not a separate close-with-reason
+		// flow, so there's one consistent way to change a bead's status.
+		const statusRow = popup.createDiv({ cls: "beads-graph-popup-status" });
+		const statusSel = statusRow.createEl("select", { cls: "dropdown" });
+		if (!EDITABLE_STATUSES.includes(issue.status as (typeof EDITABLE_STATUSES)[number])) {
+			statusSel.createEl("option", { value: issue.status, text: issue.status });
+		}
+		for (const s of EDITABLE_STATUSES) statusSel.createEl("option", { value: s, text: s });
+		statusSel.value = issue.status;
+		statusSel.onchange = () => {
+			void this.updateStatus(opts, issue.id, statusSel.value, statusSel);
+		};
 
 		if (issue.description) {
 			popup.createDiv({ cls: "beads-graph-popup-desc", text: issue.description });
 		}
 
-		const openBtn = popup.createEl("button", { cls: "mod-cta", text: "Open" });
+		const actions = popup.createDiv({ cls: "beads-graph-popup-actions" });
+		if (issue.issue_type === "epic") {
+			const addChildBtn = actions.createEl("button", { text: "Add child" });
+			addChildBtn.onclick = () => {
+				this.closePopup();
+				void this.plugin.newBead(issue.id);
+			};
+		}
+		const openBtn = actions.createEl("button", { cls: "mod-cta", text: "Open" });
 		openBtn.onclick = () => {
 			this.closePopup();
 			void this.plugin.openBead(issue.id);
 		};
+	}
+
+	/** Change a bead's status from the popup, then refresh the graph so its node color updates. */
+	private async updateStatus(
+		opts: BdOptions,
+		id: string,
+		status: string,
+		select: HTMLSelectElement,
+	): Promise<void> {
+		select.disabled = true;
+		try {
+			await bdUpdate(opts, id, { status });
+			new Notice(`Beads: ${id} → ${status}`);
+			this.plugin.refreshViews();
+			await this.loadGraph(); // re-fetch + re-lay-out so the node's color reflects the new status
+		} catch (e) {
+			new Notice(`Beads: ${e instanceof BdError ? e.message : String(e)}`, 8000);
+			select.disabled = false;
+		}
 	}
 }

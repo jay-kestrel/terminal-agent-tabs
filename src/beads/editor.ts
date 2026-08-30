@@ -36,6 +36,8 @@ interface EditorState {
 	id?: string;
 	/** Open a blank editor to create a new bead (no id yet). */
 	create?: boolean;
+	/** Pre-set + locked parent for a new bead (e.g. "Add child" from an epic). */
+	parent?: string;
 }
 
 /** The editable snapshot of a bead's fields. */
@@ -60,6 +62,8 @@ export class BeadEditorView extends ItemView {
 	private id: string | null = null;
 	private issue: BeadIssue | null = null;
 	private creating = false;
+	/** Set only when creating: the parent this new bead will be linked under. */
+	private parent: string | null = null;
 	private loadSeq = 0;
 
 	private model: EditModel = blankModel();
@@ -97,12 +101,14 @@ export class BeadEditorView extends ItemView {
 		return {
 			id: this.id ?? undefined,
 			create: this.creating && !this.id ? true : undefined,
+			parent: this.parent ?? undefined,
 		};
 	}
 
 	async setState(state: EditorState, result: ViewStateResult): Promise<void> {
 		if (state && typeof state.id === "string") this.id = state.id;
 		if (state && state.create) this.creating = true;
+		if (state && typeof state.parent === "string") this.parent = state.parent;
 		await super.setState(state, result);
 		await this.reload();
 	}
@@ -277,7 +283,7 @@ export class BeadEditorView extends ItemView {
 		const bar = root.createDiv({ cls: "beads-editor-bar" });
 		bar.createDiv({
 			cls: "beads-editor-id",
-			text: issue ? issue.id : "New bead",
+			text: issue ? issue.id : creating && this.parent ? `New bead · child of ${this.parent}` : "New bead",
 		});
 		const actions = bar.createDiv({ cls: "beads-editor-actions" });
 		if (creating) {
@@ -558,6 +564,7 @@ export class BeadEditorView extends ItemView {
 				description: this.model.description.trim() || undefined,
 				assignee: this.model.assignee.trim() || undefined,
 				labels: this.model.labels.length ? this.model.labels : undefined,
+				parent: this.parent ?? undefined,
 			});
 			new Notice(`Beads: created ${id}`);
 			this.plugin.refreshViews();

@@ -18,6 +18,8 @@ export interface RowHandlers {
 	onGraph?: (issue: BeadIssue) => void;
 	/** Hand the bead to a CLI coding agent (menu anchored on the click). */
 	onWork?: (issue: BeadIssue, event: MouseEvent) => void;
+	/** Epic rows only: open a new-bead form pre-linked as this epic's child. */
+	onAddChild?: (issue: BeadIssue) => void;
 }
 
 /** A small colored priority dot (native-restrained) with the label on hover. */
@@ -80,6 +82,18 @@ export function renderIssueRow(
 		graphBtn.onclick = (e) => {
 			e.stopPropagation();
 			handlers.onGraph?.(issue);
+		};
+	}
+
+	if (handlers.onAddChild && issue.issue_type === "epic") {
+		const addBtn = row.createEl("button", {
+			cls: "clickable-icon beads-add-child-btn",
+			attr: { "aria-label": "Add child bead" },
+		});
+		setIcon(addBtn, "plus");
+		addBtn.onclick = (e) => {
+			e.stopPropagation();
+			handlers.onAddChild?.(issue);
 		};
 	}
 

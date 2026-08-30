@@ -345,6 +345,8 @@ export interface BdCreateFields {
 	description?: string;
 	assignee?: string;
 	labels?: string[];
+	/** Parent issue id — bd links this as a hierarchical child. */
+	parent?: string;
 }
 
 /**
@@ -365,6 +367,7 @@ export async function bdCreate(
 	if (f.description) args.push(`--description=${f.description}`);
 	if (f.assignee) args.push(`--assignee=${f.assignee}`);
 	if (f.labels && f.labels.length) args.push(`--labels=${f.labels.join(",")}`);
+	if (f.parent) args.push(`--parent=${f.parent}`);
 	args.push("--json");
 	const { stdout } = await run(args, opts);
 	invalidateReadCache();

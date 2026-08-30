@@ -51,6 +51,8 @@ export interface EpicsHandlers {
 	onOpen: (issue: BeadIssue) => void;
 	/** Open the dependency graph scoped to one epic. */
 	onGraph: (issue: BeadIssue) => void;
+	/** Open a new-bead form pre-linked as this epic's child. */
+	onAddChild: (issue: BeadIssue) => void;
 }
 
 function countByStatus(children: BeadIssue[]): Map<string, number> {
@@ -123,6 +125,16 @@ function renderEpicHead(
 		handlers.onGraph(epic);
 	};
 
+	const addBtn = head.createEl("button", {
+		cls: "clickable-icon beads-add-child-btn",
+		attr: { "aria-label": "Add child bead" },
+	});
+	setIcon(addBtn, "plus");
+	addBtn.onclick = (e) => {
+		e.stopPropagation();
+		handlers.onAddChild(epic);
+	};
+
 	head.onclick = () => handlers.onToggle(epic.id);
 }
 
@@ -184,6 +196,7 @@ export function renderEpics(
 			renderIssueRow(kids, child, {
 				onOpen: (i) => handlers.onOpen(i),
 				onGraph: (i) => handlers.onGraph(i),
+				onAddChild: (i) => handlers.onAddChild(i),
 			});
 		}
 	}

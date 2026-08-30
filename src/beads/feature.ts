@@ -325,14 +325,14 @@ export class BeadsFeature {
 		return this.settings.harnesses.find((h) => h.id === id);
 	}
 
-	/** Open a blank editor tab to create a new bead (same surface as editing). */
-	async newBead(): Promise<void> {
+	/** Open a blank editor tab to create a new bead — optionally as a child of `parent`. */
+	async newBead(parent?: string): Promise<void> {
 		const { workspace } = this.app;
 		const leaf = workspace.getLeaf("tab");
 		await leaf.setViewState({
 			type: VIEW_TYPE_BEADS_EDITOR,
 			active: true,
-			state: { create: true },
+			state: { create: true, parent },
 		});
 		await workspace.revealLeaf(leaf);
 	}
