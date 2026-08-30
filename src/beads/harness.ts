@@ -85,10 +85,17 @@ export function newHarnessId(): string {
  * Shipped as editable EXAMPLES, not as a maintained list of correct flags.
  * Both pass the prompt as one positional argument, which is the only shape
  * common enough across CLI agents to be a reasonable starting guess.
+ *
+ * "Claude Code" links to the host's `sessionCliId: "claude"` profile, which
+ * `migrateCliProfiles` (SettingsMigration.ts) guarantees always exists — so
+ * "Work the bead" opens an in-app session tab out of the box instead of
+ * defaulting every fresh install to the external-terminal fallback button.
+ * "Codex CLI" has no such guarantee (the host doesn't ship a default codex
+ * profile), so it stays copy-only until the user links one themselves.
  */
 export function defaultHarnesses(): HarnessProfile[] {
 	return [
-		{ id: newHarnessId(), name: "Claude Code", command: "claude {prompt}", model: "" },
+		{ id: newHarnessId(), name: "Claude Code", command: "claude {prompt}", model: "", sessionCliId: "claude" },
 		{ id: newHarnessId(), name: "Codex CLI", command: "codex {prompt}", model: "" },
 	];
 }
