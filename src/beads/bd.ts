@@ -26,6 +26,8 @@ export class BdError extends Error {
 		message: string,
 		readonly stderr: string = "",
 		readonly cause?: unknown,
+		/** True when this call was cancelled via `BdOptions.signal`, not a real failure. */
+		readonly aborted: boolean = false,
 	) {
 		super(message);
 		this.name = "BdError";
@@ -41,6 +43,13 @@ export interface BdOptions {
 	/** Working directory — the project root containing `.beads`. */
 	cwd: string;
 	timeoutMs?: number;
+	/**
+	 * Lets a caller cancel a long-running `bd` call (e.g. a graph build the user
+	 * gave up waiting on). `execFile` kills the child with SIGTERM on abort —
+	 * `bd` is a single process (no detached Dolt child observed), so this is a
+	 * clean kill, not an orphan risk.
+	 */
+	signal?: AbortSignal;
 }
 
 // --- Global concurrency guard --------------------------------------------
@@ -73,14 +82,17 @@ function rawExec(args: string[], opts: BdOptions): Promise<BdResult> {
 				timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
 				maxBuffer: MAX_BUFFER,
 				windowsHide: true,
+				signal: opts.signal,
 			},
 			(err, stdout, stderr) => {
 				if (err) {
-					const msg =
-						(err as NodeJS.ErrnoException).code === "ENOENT"
+					const aborted = (err as NodeJS.ErrnoException).code === "ABORT_ERR" || opts.signal?.aborted === true;
+					const msg = aborted
+						? "Cancelled."
+						: (err as NodeJS.ErrnoException).code === "ENOENT"
 							? `bd binary not found at "${opts.bdPath}". Set the path in Beads settings.`
 							: `bd ${args[0] ?? ""} failed: ${err.message}`;
-					reject(new BdError(msg, String(stderr), err));
+					reject(new BdError(msg, String(stderr), err, aborted));
 					return;
 				}
 				resolve({ stdout: String(stdout), stderr: String(stderr) });
@@ -441,11 +453,17 @@ export async function bdComments(
 	}
 }
 
-// `bd graph` walks the whole dependency closure, which is slow even when
-// scoped to one epic (observed ~75s for a ~900-node closure, and worse with
-// `--all`) — give it a much longer budget than the default 15s instead of
-// failing fast.
-const GRAPH_TIMEOUT_MS = 120_000;
+// `bd graph --dot` walks the whole dependency closure inside bd/Dolt itself —
+// measured on a real ~620-issue repo: a 54-edge epic took ~24s, a 562-edge
+// epic took ~91s, and `--all` (the whole repo, ~4000 DOT lines) took ~76s.
+// This scales with the *scoped* closure size, not just repo size, and is a
+// bd/Dolt-side cost this plugin doesn't control (confirmed separately: the
+// Graphviz-WASM layout step that follows takes well under 200ms even for the
+// `--all` output — it is never the bottleneck). Give it a much longer budget
+// than the default 15s instead of failing fast; the UI also offers a Cancel
+// button so the user isn't stuck waiting out the full budget on a graph they
+// gave up on.
+const GRAPH_TIMEOUT_MS = 180_000;
 
 /**
  * `bd graph --dot [--all] [-- id]` — the dependency graph in Graphviz DOT
@@ -456,7 +474,9 @@ const GRAPH_TIMEOUT_MS = 120_000;
  * build to get a clean layered SVG — see graph.ts.
  *
  * `id` scopes to one issue/epic; `all` lays out the whole repo. Not cached: a
- * graph render is a deliberate, occasional action, not a hot path.
+ * graph render is a deliberate, occasional action, not a hot path. Pass
+ * `opts.signal` to make this cancellable (the caller drives an AbortController
+ * off a Cancel button).
  */
 export async function bdGraphDot(
 	opts: BdOptions,

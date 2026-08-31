@@ -70,12 +70,24 @@ function nodeId(g: Element): string | undefined {
  * The SVG lives in the pane's own DOM (no iframe) so a node click can call
  * `plugin.openBead()` directly; see `sanitize()` for what that costs us.
  */
+/** Tick rate for the "N s elapsed" label while a graph build is in flight. */
+const ELAPSED_TICK_MS = 1_000;
+
 export class BeadsGraphView extends ItemView {
 	private state: GraphState = {};
 	private loading = false;
 	private error?: string;
+	private cancelled = false;
 	private dot?: string;
 	private loadSeq = 0;
+
+	// Cancellation + elapsed-time tracking for the in-flight `bd graph --dot`
+	// call. `bd` is a single process (confirmed no detached Dolt child), so
+	// aborting it is a clean kill, not an orphan risk — see bd.ts.
+	private abortController?: AbortController;
+	private loadStartedAt = 0;
+	private elapsedSec = 0;
+	private elapsedTimer?: number;
 
 	// Pan/zoom state, in the SVG's own user units. Applied to a wrapper <g> we
 	// insert around Graphviz's output, so the root <svg>/viewBox stays put and
@@ -141,21 +153,61 @@ export class BeadsGraphView extends ItemView {
 		const seq = ++this.loadSeq;
 		this.loading = true;
 		this.error = undefined;
+		this.cancelled = false;
+		this.abortController = new AbortController();
+		this.startElapsedTimer();
 		this.render();
 		try {
-			const dot = await bdGraphDot(opts, { id: this.state.id, all: this.state.all });
+			const dot = await bdGraphDot(
+				{ ...opts, signal: this.abortController.signal },
+				{ id: this.state.id, all: this.state.all },
+			);
 			if (seq !== this.loadSeq) return;
 			this.dot = dot;
 			this.resetZoom(); // a new graph starts fitted, not wherever the last one was panned to
 		} catch (e) {
 			if (seq !== this.loadSeq) return;
-			this.error = e instanceof BdError ? e.message : String(e);
+			if (e instanceof BdError && e.aborted) {
+				this.cancelled = true;
+			} else {
+				this.error = e instanceof BdError ? e.message : String(e);
+			}
 		} finally {
+			this.stopElapsedTimer();
+			this.abortController = undefined;
 			if (seq === this.loadSeq) {
 				this.loading = false;
 				this.render();
 			}
 		}
+	}
+
+	private startElapsedTimer(): void {
+		this.loadStartedAt = Date.now();
+		this.elapsedSec = 0;
+		this.stopElapsedTimer();
+		this.elapsedTimer = window.setInterval(() => {
+			this.elapsedSec = Math.floor((Date.now() - this.loadStartedAt) / 1000);
+			if (this.loading) this.render();
+		}, ELAPSED_TICK_MS);
+	}
+
+	private stopElapsedTimer(): void {
+		if (this.elapsedTimer) {
+			window.clearInterval(this.elapsedTimer);
+			this.elapsedTimer = undefined;
+		}
+	}
+
+	onClose(): Promise<void> {
+		this.stopElapsedTimer();
+		this.abortController?.abort();
+		return Promise.resolve();
+	}
+
+	/** Cancel the in-flight `bd graph --dot` call. bd's process dies cleanly (SIGTERM), no orphan risk. */
+	private cancelLoad(): void {
+		this.abortController?.abort();
 	}
 
 	private resetZoom(): void {
@@ -188,6 +240,10 @@ export class BeadsGraphView extends ItemView {
 		const buttons = header.createDiv({ cls: "beads-graph-actions" });
 		const fit = buttons.createEl("button", { text: "Reset zoom" });
 		fit.onclick = () => this.resetZoom();
+		if (this.loading) {
+			const cancel = buttons.createEl("button", { text: "Cancel" });
+			cancel.onclick = () => this.cancelLoad();
+		}
 		const refresh = buttons.createEl("button", {
 			text: this.loading ? "Loading…" : "Refresh",
 		});
@@ -199,10 +255,23 @@ export class BeadsGraphView extends ItemView {
 			return;
 		}
 		if (this.loading && !this.dot) {
+			// Both a single epic and `--all` can genuinely take well over a
+			// minute on a large repo (bd/Dolt walks the whole dependency
+			// closure) — say so up front, and keep ticking the elapsed time so
+			// "still working" stays visibly distinct from "hung".
+			const scopeNote = this.state.id
+				? " — this can take a while for a large epic"
+				: this.state.all
+					? " — this can take a while for the whole repo"
+					: "";
 			root.createDiv({
 				cls: "beads-empty",
-				text: this.state.all ? "Building graph — this can take a while for the whole repo…" : "Building graph…",
+				text: `Building graph${scopeNote}… (${this.elapsedSec}s elapsed)`,
 			});
+			return;
+		}
+		if (this.cancelled && !this.dot) {
+			root.createDiv({ cls: "beads-empty", text: "Cancelled." });
 			return;
 		}
 		if (!this.dot) return;
