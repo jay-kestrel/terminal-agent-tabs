@@ -5,6 +5,7 @@ import { bdVersion, BdOptions } from "./bd";
 import {
 	HarnessProfile,
 	DEFAULT_PROMPT_TEMPLATE,
+	DEFAULT_PLANNING_PROMPT_TEMPLATE,
 	defaultHarnesses,
 	defaultTerminalCommand,
 	newHarnessId,
@@ -32,6 +33,8 @@ export interface BeadsSettings {
 	harnesses: HarnessProfile[];
 	/** Template for the generated agent prompt (see harness.ts placeholders). */
 	promptTemplate: string;
+	/** Template for a bead-agnostic planning session, launched from the graph view. */
+	planningPromptTemplate: string;
 	/** argv template for opening a terminal at `{dir}`. No shell is used. */
 	terminalCommand: string;
 }
@@ -48,6 +51,7 @@ export const DEFAULT_SETTINGS: BeadsSettings = {
 	refreshIntervalSec: 30,
 	harnesses: [],
 	promptTemplate: DEFAULT_PROMPT_TEMPLATE,
+	planningPromptTemplate: DEFAULT_PLANNING_PROMPT_TEMPLATE,
 	terminalCommand: "",
 };
 
@@ -79,6 +83,7 @@ export function migrateSettings(
 	// who deliberately deleted them doesn't get them back on every reload.
 	s.harnesses = Array.isArray(data?.harnesses) ? s.harnesses : defaultHarnesses();
 	if (!s.promptTemplate?.trim()) s.promptTemplate = DEFAULT_PROMPT_TEMPLATE;
+	if (!s.planningPromptTemplate?.trim()) s.planningPromptTemplate = DEFAULT_PLANNING_PROMPT_TEMPLATE;
 	if (!s.terminalCommand?.trim()) s.terminalCommand = defaultTerminalCommand();
 
 	const legacyRoot = data?.projectRoot?.trim();
@@ -326,6 +331,22 @@ export function renderBeadsSettings(
 					.setValue(s.promptTemplate)
 					.onChange(async (value) => {
 						s.promptTemplate = value || DEFAULT_PROMPT_TEMPLATE;
+						await plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Planning prompt template")
+			.setDesc(
+				"Used by the graph view's \"Plan\" button — no bead to describe, so the only placeholder is {project}. Clear the box to restore the default.",
+			)
+			.addTextArea((text) => {
+				text.inputEl.rows = 3;
+				text.inputEl.addClass("beads-settings-template");
+				text
+					.setValue(s.planningPromptTemplate)
+					.onChange(async (value) => {
+						s.planningPromptTemplate = value || DEFAULT_PLANNING_PROMPT_TEMPLATE;
 						await plugin.saveSettings();
 					});
 			});

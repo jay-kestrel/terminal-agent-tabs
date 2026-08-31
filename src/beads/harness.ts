@@ -127,6 +127,14 @@ Before you start, run \`bd prime\` for this repo's beads workflow and
 \`bd show {id}\` for the live record. Claim the bead, implement it, and only
 close it once its acceptance criteria actually hold.`;
 
+/**
+ * The generated prompt for a bead-agnostic "planning" session — launched from
+ * the graph view (or anywhere else that isn't a single bead) via
+ * `showPlanningMenu`. Deliberately short: there's no bead to describe, so this
+ * is just enough to orient the agent before it starts poking at `bd` itself.
+ */
+export const DEFAULT_PLANNING_PROMPT_TEMPLATE = `Planning session for {project}. Run \`bd prime\` for this repo's beads workflow, then \`bd ready\` / \`bd graph\` to see current state before making changes.`;
+
 /** Per-platform default for opening a terminal at a directory. */
 export function defaultTerminalCommand(): string {
 	switch (process.platform) {
@@ -180,6 +188,11 @@ export function buildPrompt(template: string, ctx: PromptContext): string {
 		blockers: summarize(ctx.blockers),
 		dependents: summarize(ctx.dependents),
 	});
+}
+
+/** Same placeholder mechanism as `buildPrompt`, but the only field a planning session has is the project. */
+export function buildPlanningPrompt(template: string, projectName: string): string {
+	return fill(template, { project: projectName });
 }
 
 /**
@@ -309,17 +322,49 @@ async function openWorkPreview(
 		blockers,
 		dependents,
 	});
-	new WorkTheBeadModal(app, issue, harness, prompt, deps).open();
+	new AgentSessionModal(app, `Work ${issue.id}`, issue.id, harness, prompt, deps).open();
+}
+
+/**
+ * A bead-agnostic counterpart to "Work the bead", for launching a planning
+ * session while looking at the graph (or anything else that isn't one
+ * specific bead) — same harness menu, same preview-before-anything-runs
+ * modal, but a short, project-scoped prompt instead of a bead's fields.
+ */
+export function showPlanningMenu(app: App, event: MouseEvent, deps: WorkTheBeadDeps): void {
+	const menu = new Menu();
+	if (deps.harnesses.length === 0) {
+		menu.addItem((item) =>
+			item.setTitle("No harnesses configured — add one in Beads settings").setDisabled(true),
+		);
+	}
+	for (const harness of deps.harnesses) {
+		menu.addItem((item) =>
+			item
+				.setTitle(harness.model ? `${harness.name} · ${harness.model}` : harness.name)
+				.setIcon("terminal")
+				.onClick(() => {
+					const prompt = buildPlanningPrompt(deps.promptTemplate, deps.projectName);
+					new AgentSessionModal(app, "Plan", deps.projectName, harness, prompt, deps).open();
+				}),
+		);
+	}
+	menu.showAtMouseEvent(event);
 }
 
 /**
  * Step 2: show exactly what would run. Nothing here executes the agent — the
  * user copies the command and presses Enter in their own terminal.
+ *
+ * Shared by "Work the bead" and the bead-agnostic planning-session launcher —
+ * `subjectLabel` names the session tab ("kestrel-3gy.42" or a project name);
+ * `titlePrefix` is just the modal's heading ("Work kestrel-3gy.42" / "Plan").
  */
-class WorkTheBeadModal extends Modal {
+class AgentSessionModal extends Modal {
 	constructor(
 		app: App,
-		private issue: BeadIssue,
+		private titlePrefix: string,
+		private subjectLabel: string,
 		private harness: HarnessProfile,
 		private prompt: string,
 		private deps: WorkTheBeadDeps,
@@ -332,7 +377,7 @@ class WorkTheBeadModal extends Modal {
 		contentEl.empty();
 		contentEl.addClass("beads-work");
 		this.modalEl.addClass("beads-work-modal"); // wider dialog — the default width crowds two editable textareas
-		this.titleEl.setText(`Work ${this.issue.id} with ${this.harness.name}`);
+		this.titleEl.setText(`${this.titlePrefix} with ${this.harness.name}`);
 
 		const command = buildCommand(this.harness, this.prompt);
 		const target = this.resolveSessionTarget();
@@ -371,7 +416,7 @@ class WorkTheBeadModal extends Modal {
 				// box's current text, so an edit the user made here is what
 				// actually gets typed — not the originally generated prompt.
 				prompt: promptBox.value,
-				title: `${this.issue.id} · ${this.harness.name}`,
+				title: `${this.subjectLabel} · ${this.harness.name}`,
 			});
 
 			const inline = this.deps.openInlineSession;

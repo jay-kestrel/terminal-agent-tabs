@@ -25,7 +25,7 @@ import {
 } from "./types";
 import { bdStatusCounts, invalidateReadCache } from "./bd";
 import { registerBeadsCodeBlock } from "./codeblock";
-import { showHarnessMenu, HarnessProfile } from "./harness";
+import { showHarnessMenu, showPlanningMenu, HarnessProfile } from "./harness";
 
 /**
  * The host plugin surface BeadsFeature needs. Declared structurally (rather
@@ -309,6 +309,29 @@ export class BeadsFeature {
 			sessionTargets: this.sessionTargets(),
 			openPrimedSession: (request) => this.host.openPrimedAgentSession(request),
 			openInlineSession,
+		});
+	}
+
+	/**
+	 * The bead-agnostic counterpart to `workBead` — a planning session scoped
+	 * to the active project rather than one bead, for launching from the graph
+	 * view (or anywhere else that isn't a single bead's context).
+	 */
+	planningSession(event: MouseEvent): void {
+		const opts = activeOptions(this.settings);
+		const project = activeProject(this.settings);
+		if (!opts || !project) {
+			new Notice("Beads: add a project and select it first.");
+			return;
+		}
+		showPlanningMenu(this.app, event, {
+			opts,
+			projectName: project.name || project.path,
+			promptTemplate: this.settings.planningPromptTemplate,
+			terminalCommand: this.settings.terminalCommand,
+			harnesses: this.settings.harnesses,
+			sessionTargets: this.sessionTargets(),
+			openPrimedSession: (request) => this.host.openPrimedAgentSession(request),
 		});
 	}
 

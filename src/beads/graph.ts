@@ -268,6 +268,11 @@ export class BeadsGraphView extends ItemView {
 			text: this.state.all ? "All issues" : (this.state.id ?? "Beads graph"),
 		});
 		const buttons = header.createDiv({ cls: "beads-graph-actions" });
+		// Bead-agnostic — no specific bead is "the" subject while looking at a
+		// graph, so this opens the same harness-menu/preview flow as "Work the
+		// bead" but with a short, project-scoped prompt instead of one bead's.
+		const plan = buttons.createEl("button", { cls: "mod-cta", text: "Plan" });
+		plan.onclick = (e) => this.plugin.planningSession(e);
 		const fit = buttons.createEl("button", { text: "Reset zoom" });
 		fit.onclick = () => this.resetZoom();
 		if (this.loading) {
