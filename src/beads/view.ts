@@ -137,6 +137,18 @@ export class BeadsView extends ItemView {
 	private loadSeq = 0;
 	/** Label/assignee/priority/type filter for the active tab's list (Epics tab excluded). */
 	private filters: FilterState = emptyFilters();
+	/**
+	 * Container for just the row list + load-more button, filled in by
+	 * `renderFilterBar` and updated in place by `refreshList()`. Kept so the
+	 * search box's `oninput` can refresh the filtered rows WITHOUT calling the
+	 * full `render()` — a full rebuild on every keystroke (which used to be the
+	 * only option here, hence the focus/cursor-restore dance that lived in
+	 * `renderFilterBar`) touches the whole pane's DOM including every row's
+	 * icons, dropdowns and the tab bar, just to filter a list that's already
+	 * loaded client-side.
+	 */
+	private listWrap: HTMLElement | null = null;
+	private clearFilterBtn: HTMLElement | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -195,8 +207,18 @@ export class BeadsView extends ItemView {
 		return opts;
 	}
 
-	/** Full refresh: re-count and re-load the active tab; drop cached tabs. */
-	async refresh(): Promise<void> {
+	/** The counts fetched by the last `refresh()`, for callers that need the same numbers (e.g. the status bar). */
+	getCounts(): Record<string, number> {
+		return this.counts;
+	}
+
+	/**
+	 * Full refresh: re-count and re-load the active tab; drop cached tabs.
+	 * `precomputedCounts`, when supplied, skips this view's own `bd status`
+	 * call — used by `BeadsFeature.refreshViews()` so N open panes plus the
+	 * status bar share ONE `bd status --json` spawn instead of N+1.
+	 */
+	async refresh(precomputedCounts?: Record<string, number>): Promise<void> {
 		for (const t of TABS) {
 			this.tabs[t.key].loaded = false;
 			this.tabs[t.key].limit = PAGE;
@@ -212,10 +234,14 @@ export class BeadsView extends ItemView {
 			return;
 		}
 		const seq = ++this.loadSeq;
-		try {
-			this.counts = await bdStatusCounts(opts);
-		} catch {
-			/* counts are optional chrome */
+		if (precomputedCounts) {
+			this.counts = precomputedCounts;
+		} else {
+			try {
+				this.counts = await bdStatusCounts(opts);
+			} catch {
+				/* counts are optional chrome */
+			}
 		}
 		if (seq !== this.loadSeq) return;
 		await this.loadTab(this.active, seq);
@@ -403,13 +429,14 @@ export class BeadsView extends ItemView {
 			attr: { type: "search", placeholder: "Search…" },
 		});
 		search.value = this.filters.search;
+		// Targeted update, not a full `this.render()`: the search box itself is
+		// never touched, so focus/cursor position are naturally preserved — no
+		// restore-after-rebuild hack needed — and a keystroke no longer rebuilds
+		// the tab bar, header and every row's icons just to refilter an
+		// already-loaded list.
 		search.oninput = () => {
-			const cursor = search.selectionStart;
 			this.filters.search = search.value;
-			this.render(); // rebuilds the whole pane, including this input — restore focus/cursor below
-			const restored = this.contentEl.querySelector<HTMLInputElement>(".beads-filter-search");
-			restored?.focus();
-			if (restored && cursor !== null) restored.setSelectionRange(cursor, cursor);
+			this.refreshList();
 		};
 
 		const addSelect = (
@@ -462,15 +489,63 @@ export class BeadsView extends ItemView {
 			(v) => (this.filters.type = v),
 		);
 
-		if (hasActiveFilter(this.filters)) {
-			const clear = bar.createEl("button", {
-				cls: "beads-filter-clear",
-				text: "Clear filters",
+		// Always created (visibility toggled by `refreshList()`), so the search
+		// box's targeted update can show/hide it without rebuilding the bar.
+		const clear = bar.createEl("button", {
+			cls: "beads-filter-clear",
+			text: "Clear filters",
+		});
+		clear.toggleClass("beads-hidden", !hasActiveFilter(this.filters));
+		clear.onclick = () => {
+			this.filters = emptyFilters();
+			this.render();
+		};
+		this.clearFilterBtn = clear;
+	}
+
+	/**
+	 * Re-filter and redraw just the row list (+ load-more button) for the
+	 * active tab, in place. Used by the search box so typing doesn't rebuild
+	 * the header, tab bar, or filter dropdowns — see `listWrap`'s doc comment.
+	 */
+	private refreshList(): void {
+		const wrap = this.listWrap;
+		if (!wrap) {
+			this.render(); // no partial target mounted yet — fall back to a full render
+			return;
+		}
+		this.clearFilterBtn?.toggleClass("beads-hidden", !hasActiveFilter(this.filters));
+		wrap.empty();
+		const tab = this.tabs[this.active];
+		const visible = tab.issues.filter((i) => matchesFilters(i, this.filters));
+
+		if (visible.length === 0) {
+			wrap.createDiv({
+				cls: "beads-empty",
+				text: "No issues match the current filters.",
 			});
-			clear.onclick = () => {
-				this.filters = emptyFilters();
-				this.render();
-			};
+			return;
+		}
+
+		const list = wrap.createDiv({ cls: "beads-list" });
+		for (const issue of visible) {
+			renderIssueRow(list, issue, {
+				onOpen: (i) => this.openBead(i),
+				showDeps: this.active === "blocked",
+				onGraph: (i) => void this.plugin.openGraph({ id: i.id }),
+				onWork: (i, e) => this.plugin.workBead(i, e),
+				onAddChild: (i) => void this.plugin.newBead({ parent: i.id }),
+				onAddDependent: (i) => void this.plugin.newBead({ blockedBy: i.id }),
+			});
+		}
+
+		if (tab.hasMore) {
+			const more = wrap.createEl("button", {
+				cls: "beads-loadmore",
+				text: tab.loading ? "Loading…" : "Load more",
+			});
+			more.disabled = tab.loading;
+			more.onclick = () => void this.loadMore();
 		}
 	}
 
@@ -558,35 +633,7 @@ export class BeadsView extends ItemView {
 		}
 
 		this.renderFilterBar(body, tab.issues);
-		const visible = tab.issues.filter((i) => matchesFilters(i, this.filters));
-
-		if (visible.length === 0) {
-			body.createDiv({
-				cls: "beads-empty",
-				text: "No issues match the current filters.",
-			});
-			return;
-		}
-
-		const list = body.createDiv({ cls: "beads-list" });
-		for (const issue of visible) {
-			renderIssueRow(list, issue, {
-				onOpen: (i) => this.openBead(i),
-				showDeps: this.active === "blocked",
-				onGraph: (i) => void this.plugin.openGraph({ id: i.id }),
-				onWork: (i, e) => this.plugin.workBead(i, e),
-				onAddChild: (i) => void this.plugin.newBead({ parent: i.id }),
-				onAddDependent: (i) => void this.plugin.newBead({ blockedBy: i.id }),
-			});
-		}
-
-		if (tab.hasMore) {
-			const more = body.createEl("button", {
-				cls: "beads-loadmore",
-				text: tab.loading ? "Loading…" : "Load more",
-			});
-			more.disabled = tab.loading;
-			more.onclick = () => void this.loadMore();
-		}
+		this.listWrap = body.createDiv({ cls: "beads-tab-results" });
+		this.refreshList();
 	}
 }

@@ -492,9 +492,3 @@ export async function bdStatusCounts(
 		return {};
 	}
 }
-
-/** Ready-issue count (for the status bar). */
-export async function bdReadyCount(opts: BdOptions): Promise<number> {
-	const counts = await bdStatusCounts(opts);
-	return counts.ready_issues ?? 0;
-}

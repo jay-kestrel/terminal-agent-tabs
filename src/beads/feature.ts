@@ -23,7 +23,7 @@ import {
 	VIEW_TYPE_BEADS_EDITOR,
 	VIEW_TYPE_BEADS_GRAPH,
 } from "./types";
-import { bdReadyCount, invalidateReadCache } from "./bd";
+import { bdStatusCounts, invalidateReadCache } from "./bd";
 import { registerBeadsCodeBlock } from "./codeblock";
 import { showHarnessMenu, HarnessProfile } from "./harness";
 
@@ -341,15 +341,41 @@ export class BeadsFeature {
 		await workspace.revealLeaf(leaf);
 	}
 
-	/** Refresh every open Beads pane, and the status-bar ready count. */
+	/**
+	 * Refresh every open Beads pane, and the status-bar ready count.
+	 *
+	 * Both `BeadsView.refresh()` and the status bar want the same `bd status
+	 * --json` summary, so this fetches it ONCE (when at least one pane is
+	 * open) and hands the same object to every pane and to `updateStatusBar`,
+	 * instead of each independently spawning its own `bd status` process —
+	 * this call fires on every refresh-timer tick, every external `.beads`
+	 * write, and every save/create/close mutation, so the duplicate spawn was
+	 * not a one-off cost.
+	 */
 	refreshViews(): void {
-		for (const leaf of this.app.workspace.getLeavesOfType(
-			VIEW_TYPE_BEADS,
-		)) {
-			const view = leaf.view;
-			if (view instanceof BeadsView) void view.refresh();
+		const views = this.app.workspace
+			.getLeavesOfType(VIEW_TYPE_BEADS)
+			.map((leaf) => leaf.view)
+			.filter((v): v is BeadsView => v instanceof BeadsView);
+
+		if (views.length === 0) {
+			this.updateStatusBar();
+			return;
 		}
-		this.updateStatusBar();
+
+		const opts = activeOptions(this.settings);
+		if (!opts) {
+			for (const view of views) void view.refresh();
+			this.updateStatusBar();
+			return;
+		}
+
+		void bdStatusCounts(opts)
+			.catch(() => ({}) as Record<string, number>)
+			.then((counts) => {
+				for (const view of views) void view.refresh(counts);
+				this.updateStatusBar(counts);
+			});
 	}
 
 	/**
@@ -389,9 +415,17 @@ export class BeadsFeature {
 	 * Reports the ACTIVE project only — an aggregate across projects would be
 	 * both ambiguous (which repo is the number about?) and N subprocess spawns
 	 * per refresh tick.
+	 *
+	 * `precomputedCounts`, when supplied (from `refreshViews()`, which already
+	 * fetched the same `bd status` summary for the open panes), skips this
+	 * method's own `bd status` call entirely.
 	 */
-	updateStatusBar(): void {
+	updateStatusBar(precomputedCounts?: Record<string, number>): void {
 		if (!this.statusBarEl) return;
+		if (precomputedCounts) {
+			this.statusBarEl.setText(`● ${precomputedCounts.ready_issues ?? 0} ready`);
+			return;
+		}
 		const opts = activeOptions(this.settings);
 		if (!opts) {
 			this.statusBarEl.setText("");
@@ -399,9 +433,9 @@ export class BeadsFeature {
 		}
 		// Drop stale results: only the latest request may write the count.
 		const my = ++this.statusSeq;
-		void bdReadyCount(opts)
-			.then((n) => {
-				if (my === this.statusSeq) this.statusBarEl?.setText(`● ${n} ready`);
+		void bdStatusCounts(opts)
+			.then((counts) => {
+				if (my === this.statusSeq) this.statusBarEl?.setText(`● ${counts.ready_issues ?? 0} ready`);
 			})
 			.catch(() => {
 				if (my === this.statusSeq) this.statusBarEl?.setText("");
