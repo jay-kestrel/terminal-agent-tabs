@@ -626,6 +626,20 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 	 * then writes. If the agent never produces output within the window the
 	 * write is skipped and the user is told, rather than blind-typing into an
 	 * unknown state.
+	 *
+	 * BUG FIX (prompt corruption): writing the prompt as plain characters races
+	 * the CLI's own UI transition from "placeholder" to "active input" — Claude
+	 * Code (and presumably other ink-based CLIs) can consume the first line(s)
+	 * of a plain write as part of that transition and never echo them into the
+	 * buffer, silently dropping the start of a multi-line prompt. Confirmed by
+	 * writing straight to a real `claude` PTY: a bare multi-line write reliably
+	 * lost its first line; the same write wrapped in bracketed-paste markers
+	 * (`ESC[200~ ... ESC[201~`) landed intact as a single pasted block instead —
+	 * which also matches this feature's documented intent ("lands ... exactly
+	 * as a paste would"). Only wrap when the CLI has told the terminal it
+	 * understands bracketed paste (`session.bracketedPasteEnabled`, set from
+	 * ESC[?2004h in its own output) so CLIs that never asked for it — a plain
+	 * shell, say — still just receive the prompt as-is.
 	 */
 	private async primeSession(sessionId: string, prompt: string): Promise<void> {
 		const READY_TIMEOUT_MS = 20_000;
@@ -633,8 +647,9 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 		const POLL_MS = 150;
 
 		const deadline = Date.now() + READY_TIMEOUT_MS;
+		let session = this.sessionManager.getSession(sessionId);
 		for (;;) {
-			const session = this.sessionManager.getSession(sessionId);
+			session = this.sessionManager.getSession(sessionId);
 			if (!session || session.status === 'exited' || session.status === 'error') {
 				throw new Error('The session exited before the prompt could be sent.');
 			}
@@ -649,7 +664,8 @@ export default class ClaudeCodeTabsPlugin extends Plugin {
 		}
 		await sleep(SETTLE_MS);
 		// No trailing newline. This types; it does not submit.
-		this.sessionManager.writeToSession(sessionId, prompt);
+		const payload = session.bracketedPasteEnabled ? `\x1b[200~${prompt}\x1b[201~` : prompt;
+		this.sessionManager.writeToSession(sessionId, payload);
 		new Notice('Beads: prompt typed into the session — review it, then press Enter.');
 	}
 

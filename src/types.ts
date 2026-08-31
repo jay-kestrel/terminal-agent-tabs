@@ -80,6 +80,13 @@ export interface Session {
 	lastOutputLine?: string;
 	debugLogPath?: string;
 	debugStream?: WriteStream | null;
+	/**
+	 * Whether the CLI has told the terminal it understands bracketed paste
+	 * (`ESC[?2004h`, seen in its raw output). Used by primeSession() to decide
+	 * whether a programmatically-typed prompt should be wrapped as a paste —
+	 * see the comment on that function.
+	 */
+	bracketedPasteEnabled?: boolean;
 }
 
 export interface ClaudeCodeTabsSettings {

@@ -667,7 +667,12 @@ export class SessionManager {
 					session.debugStream.write('\n');
 				}
 				const decoded = stdoutDecoder.write(chunk);
-				if (decoded) onData(decoded);
+				if (decoded) {
+					if (!session.bracketedPasteEnabled && decoded.includes('\x1b[?2004h')) {
+						session.bracketedPasteEnabled = true;
+					}
+					onData(decoded);
+				}
 			});
 		}
 
