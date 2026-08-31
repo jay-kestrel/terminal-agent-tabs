@@ -320,6 +320,14 @@ export class BeadEditorView extends ItemView {
 				// "run it here" route on top of its existing tab/copy routes.
 				this.plugin.workBead(this.issue, e, (request) => this.startAgent(request));
 			};
+			// Any bead, not just epics — `bd graph` already supports scoping to a
+			// single regular issue (it shows that issue plus its direct
+			// dependencies); the pane row's graph icon is epic-only for list
+			// density, but the full editor has room to offer it for every bead.
+			const graphBtn = actions.createEl("button", { text: "View graph" });
+			graphBtn.onclick = () => {
+				if (this.issue) void this.plugin.openGraph({ id: this.issue.id });
+			};
 			this.revertBtn = actions.createEl("button", { text: "Revert" });
 			this.saveBtn = actions.createEl("button", { cls: "mod-cta", text: "Save" });
 			this.saveBtn.disabled = true;
