@@ -316,8 +316,16 @@ export class BeadsFeature {
 	 * The bead-agnostic counterpart to `workBead` — a planning session scoped
 	 * to the active project rather than one bead, for launching from the graph
 	 * view (or anywhere else that isn't a single bead's context).
+	 *
+	 * `openInlineSession` mirrors `workBead`'s: supplied only by callers with
+	 * somewhere of their own to put a terminal (the graph view, below the
+	 * graph), offering a third route that runs the agent there instead of a
+	 * new tab.
 	 */
-	planningSession(event: MouseEvent): void {
+	planningSession(
+		event: MouseEvent,
+		openInlineSession?: (request: PrimedSessionRequest) => Promise<void>,
+	): void {
 		const opts = activeOptions(this.settings);
 		const project = activeProject(this.settings);
 		if (!opts || !project) {
@@ -332,6 +340,7 @@ export class BeadsFeature {
 			harnesses: this.settings.harnesses,
 			sessionTargets: this.sessionTargets(),
 			openPrimedSession: (request) => this.host.openPrimedAgentSession(request),
+			openInlineSession,
 		});
 	}
 

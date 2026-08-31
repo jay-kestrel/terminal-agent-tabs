@@ -2,7 +2,7 @@ import { ItemView, WorkspaceLeaf, Notice } from "obsidian";
 import { existsSync } from "fs";
 import { join } from "path";
 import { instance as vizInstance } from "@viz-js/viz";
-import type { BeadsFeature as BeadsPlugin } from "./feature";
+import type { BeadsFeature as BeadsPlugin, InlineAgentSession, PrimedSessionRequest } from "./feature";
 import { activeOptions } from "./settings";
 import { VIEW_TYPE_BEADS_GRAPH, BeadIssue, EDITABLE_STATUSES } from "./types";
 import { bdExport, bdShow, bdUpdate, BdError, BdOptions } from "./bd";
@@ -104,6 +104,14 @@ export class BeadsGraphView extends ItemView {
 	// (or closed the popup) in the meantime.
 	private popupEl?: HTMLElement;
 	private popupSeq = 0;
+
+	// The graph and the agent pane are SIBLINGS, not nested — same reasoning as
+	// BeadEditorView: render() empties its own root on every load, and a
+	// terminal inside that root would be destroyed (and its process orphaned)
+	// by an unrelated reload (e.g. the watcher-driven background refresh).
+	private bodyEl: HTMLElement | null = null;
+	private paneEl: HTMLElement | null = null;
+	private agent: InlineAgentSession | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -223,16 +231,92 @@ export class BeadsGraphView extends ItemView {
 		}
 	}
 
-	onClose(): Promise<void> {
+	async onClose(): Promise<void> {
 		this.stopElapsedTimer();
 		this.abortController?.abort();
-		return Promise.resolve();
+		// Kill the embedded agent before the DOM goes away, so closing the tab
+		// cannot leave an orphaned PTY behind.
+		await this.closeAgent();
+		this.contentEl.empty();
+		this.bodyEl = null;
+		this.paneEl = null;
+	}
+
+	onResize(): void {
+		this.agent?.fit();
 	}
 
 	/** Called by `BeadsFeature` on a `.beads` watcher/timer tick — reloads without disturbing the current pan/zoom. */
 	refreshFromExternalChange(): void {
 		if (this.loading) return; // a load already in flight will pick up the change
 		void this.loadGraph(true);
+	}
+
+	// --- agent pane --------------------------------------------------------
+
+	/**
+	 * The two-part layout: the graph pinned above, an agent pane below it.
+	 * Built lazily so the first `render()` call (from `onOpen`) creates it.
+	 */
+	private ensureShell(): HTMLElement {
+		if (this.bodyEl?.isConnected) return this.bodyEl;
+		const root = this.contentEl;
+		root.empty();
+		root.addClass("beads-graph-shell");
+		this.bodyEl = root.createDiv();
+		this.paneEl = root.createDiv({ cls: "beads-agent-pane beads-hidden" });
+		return this.bodyEl;
+	}
+
+	/**
+	 * Start an agent in the pane below the graph. Reached only from the "Plan"
+	 * button's preview modal — an explicit click, an explicit harness choice,
+	 * and an explicit second click on a modal that shows the exact prompt. See
+	 * harness.ts for the full safety posture (typed, never submitted).
+	 */
+	private async startAgent(request: PrimedSessionRequest): Promise<void> {
+		await this.closeAgent();
+		const pane = this.paneEl;
+		if (!pane) throw new Error("The graph view is not ready.");
+
+		pane.empty();
+		pane.removeClass("beads-hidden");
+
+		const bar = pane.createDiv({ cls: "beads-agent-bar" });
+		const label = bar.createDiv({ cls: "beads-agent-title", text: request.title });
+		const closeBtn = bar.createEl("button", {
+			cls: "beads-agent-close",
+			text: "Close agent",
+		});
+		closeBtn.onclick = () => void this.closeAgent();
+		const host = pane.createDiv({ cls: "beads-agent-terminal" });
+
+		try {
+			this.agent = this.plugin.mountInlineAgentSession(host, request);
+		} catch (e) {
+			this.hideAgentPane();
+			throw e instanceof Error ? e : new Error(String(e));
+		}
+		const agent = this.agent;
+		agent.primed.then(
+			() => agent.focus(),
+			(e: Error) => {
+				label.setText(`${request.title} — ${e.message}`);
+				new Notice(`Beads: ${e.message}`);
+			},
+		);
+	}
+
+	private async closeAgent(): Promise<void> {
+		const agent = this.agent;
+		this.agent = null;
+		if (agent) await agent.dispose();
+		this.hideAgentPane();
+	}
+
+	private hideAgentPane(): void {
+		this.paneEl?.empty();
+		this.paneEl?.addClass("beads-hidden");
 	}
 
 	/** Cancel the in-flight `bd export` call. bd's process dies cleanly (SIGTERM), no orphan risk. */
@@ -255,7 +339,7 @@ export class BeadsGraphView extends ItemView {
 	}
 
 	private render(): void {
-		const root = this.contentEl;
+		const root = this.ensureShell();
 		root.empty();
 		this.zoomLayer = undefined;
 		this.popupEl = undefined;
@@ -272,7 +356,7 @@ export class BeadsGraphView extends ItemView {
 		// graph, so this opens the same harness-menu/preview flow as "Work the
 		// bead" but with a short, project-scoped prompt instead of one bead's.
 		const plan = buttons.createEl("button", { cls: "mod-cta", text: "Plan" });
-		plan.onclick = (e) => this.plugin.planningSession(e);
+		plan.onclick = (e) => this.plugin.planningSession(e, (request) => this.startAgent(request));
 		const fit = buttons.createEl("button", { text: "Reset zoom" });
 		fit.onclick = () => this.resetZoom();
 		if (this.loading) {

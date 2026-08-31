@@ -1053,6 +1053,22 @@ select.beads-prop-input {
 }
 
 /* Dependency graph tab */
+.workspace-leaf-content[data-type="beads-agent-tabs-graph"] .view-content {
+	padding: 0;
+}
+/* Splits the graph tab into the graph (flexible) and an agent pane (fixed,
+   resizable) below it — same shell/agent-pane split as the bead editor, see
+   .beads-editor-shell. .beads-agent-* itself is already shared, not editor-only. */
+.beads-graph-shell {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+}
+.beads-graph-shell > :first-child {
+	flex: 1 1 auto;
+	min-height: 0;
+}
 .beads-graph-pane {
 	display: flex;
 	flex-direction: column;
