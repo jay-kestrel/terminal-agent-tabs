@@ -217,11 +217,19 @@ export class BeadsView extends ItemView {
 	 * `precomputedCounts`, when supplied, skips this view's own `bd status`
 	 * call — used by `BeadsFeature.refreshViews()` so N open panes plus the
 	 * status bar share ONE `bd status --json` spawn instead of N+1.
+	 *
+	 * `keepPagination`, when true, leaves each tab's "Load more" depth alone
+	 * instead of collapsing it back to one page. Set by the BACKGROUND refresh
+	 * paths — the 30s timer, the `.beads` filesystem watcher, and post-mutation
+	 * refreshes, all routed through `refreshViews()` — so a page you'd paged
+	 * further into doesn't silently shrink back under you. The manual Refresh
+	 * button and the initial `onOpen()` load are the ONE case that should
+	 * reset back to a single page, since that's the explicit "start over" action.
 	 */
-	async refresh(precomputedCounts?: Record<string, number>): Promise<void> {
+	async refresh(precomputedCounts?: Record<string, number>, keepPagination = false): Promise<void> {
 		for (const t of TABS) {
 			this.tabs[t.key].loaded = false;
-			this.tabs[t.key].limit = PAGE;
+			if (!keepPagination) this.tabs[t.key].limit = PAGE;
 		}
 		// Filters are sticky across a refresh — only the "Clear filters" button
 		// resets them; a background reload shouldn't silently drop what the user

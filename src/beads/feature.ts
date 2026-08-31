@@ -342,7 +342,8 @@ export class BeadsFeature {
 	}
 
 	/**
-	 * Refresh every open Beads pane, and the status-bar ready count.
+	 * Refresh every open Beads pane and graph tab, and the status-bar ready
+	 * count.
 	 *
 	 * Both `BeadsView.refresh()` and the status bar want the same `bd status
 	 * --json` summary, so this fetches it ONCE (when at least one pane is
@@ -353,6 +354,15 @@ export class BeadsFeature {
 	 * not a one-off cost.
 	 */
 	refreshViews(): void {
+		// Any open graph tab reloads too — e.g. an agent creating beads in a
+		// terminal while a graph is open should make them show up without a
+		// manual click. `refreshFromExternalChange` keeps the current pan/zoom
+		// instead of re-fitting, since this fires in the background, not from
+		// the user asking for a fresh view.
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_BEADS_GRAPH)) {
+			if (leaf.view instanceof BeadsGraphView) leaf.view.refreshFromExternalChange();
+		}
+
 		const views = this.app.workspace
 			.getLeavesOfType(VIEW_TYPE_BEADS)
 			.map((leaf) => leaf.view)
@@ -365,7 +375,10 @@ export class BeadsFeature {
 
 		const opts = activeOptions(this.settings);
 		if (!opts) {
-			for (const view of views) void view.refresh();
+			// keepPagination: true — this path fires from the 30s timer, the
+			// .beads watcher, and every mutation, never from the user clicking
+			// Refresh, so a page they'd paged further into shouldn't collapse.
+			for (const view of views) void view.refresh(undefined, true);
 			this.updateStatusBar();
 			return;
 		}
@@ -373,7 +386,7 @@ export class BeadsFeature {
 		void bdStatusCounts(opts)
 			.catch(() => ({}) as Record<string, number>)
 			.then((counts) => {
-				for (const view of views) void view.refresh(counts);
+				for (const view of views) void view.refresh(counts, true);
 				this.updateStatusBar(counts);
 			});
 	}

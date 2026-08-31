@@ -144,7 +144,15 @@ export class BeadsGraphView extends ItemView {
 		return opts;
 	}
 
-	private async loadGraph(): Promise<void> {
+	/**
+	 * `preserveView`, when true and a graph is already showing, keeps the
+	 * current pan/zoom instead of re-fitting. Used by watcher/timer-driven
+	 * background reloads (see `refreshFromExternalChange`) so a graph update
+	 * from an agent creating beads in a terminal doesn't yank the view out from
+	 * under someone who's mid-pan/zoom. An explicit user-initiated load (first
+	 * open, Refresh click, or a genuinely empty view) always re-fits.
+	 */
+	private async loadGraph(preserveView = false): Promise<void> {
 		const opts = this.resolveOpts();
 		if (!opts) {
 			this.error = "No project root / .beads database configured (Settings → Beads).";
@@ -152,6 +160,7 @@ export class BeadsGraphView extends ItemView {
 			this.render();
 			return;
 		}
+		const keepPanZoom = preserveView && this.dot !== undefined;
 		const seq = ++this.loadSeq;
 		this.loading = true;
 		this.error = undefined;
@@ -171,7 +180,7 @@ export class BeadsGraphView extends ItemView {
 			});
 			if (seq !== this.loadSeq) return;
 			this.dot = dot;
-			this.resetZoom(); // a new graph starts fitted, not wherever the last one was panned to
+			if (!keepPanZoom) this.resetZoom(); // a new graph starts fitted, not wherever the last one was panned to
 		} catch (e) {
 			if (seq !== this.loadSeq) return;
 			if (e instanceof BdError && e.aborted) {
@@ -218,6 +227,12 @@ export class BeadsGraphView extends ItemView {
 		this.stopElapsedTimer();
 		this.abortController?.abort();
 		return Promise.resolve();
+	}
+
+	/** Called by `BeadsFeature` on a `.beads` watcher/timer tick — reloads without disturbing the current pan/zoom. */
+	refreshFromExternalChange(): void {
+		if (this.loading) return; // a load already in flight will pick up the change
+		void this.loadGraph(true);
 	}
 
 	/** Cancel the in-flight `bd export` call. bd's process dies cleanly (SIGTERM), no orphan risk. */
