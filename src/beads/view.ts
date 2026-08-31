@@ -223,7 +223,9 @@ export class BeadsView extends ItemView {
 			this.tabs[t.key].loaded = false;
 			this.tabs[t.key].limit = PAGE;
 		}
-		this.filters = emptyFilters();
+		// Filters are sticky across a refresh — only the "Clear filters" button
+		// resets them; a background reload shouldn't silently drop what the user
+		// selected.
 		// Keep which epics are open across a refresh; drop their cached children
 		// so an expanded epic re-reads from bd instead of showing stale rows.
 		this.epics.loaded = false;
@@ -372,7 +374,8 @@ export class BeadsView extends ItemView {
 	private async switchTab(key: string): Promise<void> {
 		if (this.active === key) return;
 		this.active = key;
-		this.filters = emptyFilters();
+		// Filters stay applied across a tab switch — only "Clear filters" resets
+		// them.
 		const loaded = key === EPICS_TAB ? this.epics.loaded : this.tabs[key].loaded;
 		if (loaded) this.render(); // cached → instant
 		else await this.loadTab(key);
@@ -451,6 +454,14 @@ export class BeadsView extends ItemView {
 			});
 			const allOption = select.createEl("option", { value: "", text: label });
 			allOption.selected = value === "";
+			// Filters persist across tab switches, so a selected value may not be
+			// among THIS tab's options (e.g. an assignee only present on another
+			// tab's issues) — show it anyway rather than silently falling back to
+			// "All X" while the filter is still actually applied underneath.
+			if (value !== "" && !choices.some((c) => c.value === value)) {
+				const stale = select.createEl("option", { value, text: value });
+				stale.selected = true;
+			}
 			for (const c of choices) {
 				const option = select.createEl("option", { value: c.value, text: c.text });
 				option.selected = c.value === value;
