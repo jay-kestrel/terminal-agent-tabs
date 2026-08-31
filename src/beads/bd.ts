@@ -35,7 +35,19 @@ export class BdError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
-const MAX_BUFFER = 16 * 1024 * 1024; // 16 MB — plenty for JSON of a large repo
+// Output cap for any single bd call. Sized off the biggest payload we ask for:
+// `bd export` (the whole issue DB, used by the graph view) measured 4.5 MB for
+// 1232 issues, i.e. ~3.8 KB/issue, so 64 MB covers roughly 17k issues. This is
+// a ceiling, not an allocation — Node grows the buffer as output arrives — so
+// the only cost of being generous is how much a runaway `bd` could buffer
+// before we give up on it, and the timeout bounds that anyway.
+//
+// Overflow is NOT silent: `execFile` kills the child and calls back with
+// `ERR_CHILD_PROCESS_STDIO_MAXBUFFER` (verified on Node 26 — the truncated
+// buffer is passed alongside a real error, and we only ever resolve on `!err`),
+// so `rawExec` turns it into a `BdError` the UI shows. See the explicit message
+// for that code below.
+const MAX_BUFFER = 64 * 1024 * 1024;
 
 export interface BdOptions {
 	/** Path to the bd binary (or just "bd" to resolve via PATH). */
@@ -87,11 +99,14 @@ function rawExec(args: string[], opts: BdOptions): Promise<BdResult> {
 			(err, stdout, stderr) => {
 				if (err) {
 					const aborted = (err as NodeJS.ErrnoException).code === "ABORT_ERR" || opts.signal?.aborted === true;
+					const code = (err as NodeJS.ErrnoException).code;
 					const msg = aborted
 						? "Cancelled."
-						: (err as NodeJS.ErrnoException).code === "ENOENT"
+						: code === "ENOENT"
 							? `bd binary not found at "${opts.bdPath}". Set the path in Beads settings.`
-							: `bd ${args[0] ?? ""} failed: ${err.message}`;
+							: code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+								? `bd ${args[0] ?? ""} produced more than ${Math.round(MAX_BUFFER / (1024 * 1024))} MB of output, so the result was discarded rather than used half-read. This repo may be too large for this plugin's output cap.`
+								: `bd ${args[0] ?? ""} failed: ${err.message}`;
 					reject(new BdError(msg, String(stderr), err, aborted));
 					return;
 				}
@@ -453,39 +468,44 @@ export async function bdComments(
 	}
 }
 
-// `bd graph --dot` walks the whole dependency closure inside bd/Dolt itself —
-// measured on a real ~620-issue repo: a 54-edge epic took ~24s, a 562-edge
-// epic took ~91s, and `--all` (the whole repo, ~4000 DOT lines) took ~76s.
-// This scales with the *scoped* closure size, not just repo size, and is a
-// bd/Dolt-side cost this plugin doesn't control (confirmed separately: the
-// Graphviz-WASM layout step that follows takes well under 200ms even for the
-// `--all` output — it is never the bottleneck). Give it a much longer budget
-// than the default 15s instead of failing fast; the UI also offers a Cancel
-// button so the user isn't stuck waiting out the full budget on a graph they
-// gave up on.
-const GRAPH_TIMEOUT_MS = 180_000;
+// The graph view used to shell out to `bd graph --dot`, which walks the
+// dependency closure inside bd/Dolt with an N+1-shaped query per node —
+// measured on a real ~1226-issue repo: 8s for a single non-epic issue, 49s for
+// a 73-node epic, 142s for a 331-node epic, 54s for `--all`. `bd export`
+// returns EVERY issue in the repo, dependency edges included, in 1.5s flat on
+// the same repo, so the graph is now built client-side from one export (see
+// graphBuilder.ts) and this is the only bd call the view makes.
+//
+// Measured repeatedly at 1.2–1.9s for 1232 issues. 60s is ~30x that, chosen
+// rather than something tighter because the failure modes are asymmetric: a
+// timeout that fires on a merely-slow repo is a hard, unexplained error for the
+// user, while waiting too long costs nothing — the view shows a ticking elapsed
+// counter and a Cancel button, so the human, not the clock, decides when to
+// give up. `bd export` cost grows with repo size and it is a Dolt read that can
+// contend with an in-flight `bd` write elsewhere, so the tail is not bounded by
+// the median. Note the global concurrency gate is acquired *before* this timer
+// starts, so queueing behind other bd calls never eats the budget.
+const EXPORT_TIMEOUT_MS = 60_000;
 
 /**
- * `bd graph --dot [--all] [-- id]` — the dependency graph in Graphviz DOT
- * format. This is the same layered model as bd's terminal view (one
- * `rank=same` sub-graph per dependency layer), with bd's status palette
- * already baked into each node's `fillcolor`/`fontcolor`, and node ids that
- * are literally the bd issue ids. We run it through a vendored Graphviz WASM
- * build to get a clean layered SVG — see graph.ts.
+ * `bd export` — every issue in the repo as JSONL, one object per line, each
+ * carrying its labels and its full `dependencies[]` array. Returned raw so the
+ * caller can parse it (see `parseExportJsonl`); the payload is a few MB on a
+ * large repo (4.5 MB / 1232 issues measured), well inside `MAX_BUFFER`, and
+ * exceeding it errors rather than truncating — see `MAX_BUFFER`.
  *
- * `id` scopes to one issue/epic; `all` lays out the whole repo. Not cached: a
- * graph render is a deliberate, occasional action, not a hot path. Pass
- * `opts.signal` to make this cancellable (the caller drives an AbortController
- * off a Cancel button).
+ * Deliberately no flags: bd's default already excludes infrastructure beads
+ * (agents/roles/messages) and memories, which is exactly the universe
+ * `bd graph` itself draws from — verified by resolving real `bd graph --dot`
+ * node sets against a default export with zero unresolved ids.
+ *
+ * Not cached: a graph render is a deliberate, occasional action, not a hot
+ * path, and a stale graph is worse than a 1.5s wait. Pass `opts.signal` to
+ * make this cancellable (the caller drives an AbortController off a Cancel
+ * button).
  */
-export async function bdGraphDot(
-	opts: BdOptions,
-	target: { id?: string; all?: boolean },
-): Promise<string> {
-	const args = ["graph", "--dot"];
-	if (target.all) args.push("--all");
-	if (target.id) args.push("--", target.id);
-	const { stdout } = await run(args, { ...opts, timeoutMs: GRAPH_TIMEOUT_MS });
+export async function bdExport(opts: BdOptions): Promise<string> {
+	const { stdout } = await run(["export"], { ...opts, timeoutMs: EXPORT_TIMEOUT_MS });
 	return stdout;
 }
 

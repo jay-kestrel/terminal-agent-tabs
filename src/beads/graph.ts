@@ -5,7 +5,8 @@ import { instance as vizInstance } from "@viz-js/viz";
 import type { BeadsFeature as BeadsPlugin } from "./feature";
 import { activeOptions } from "./settings";
 import { VIEW_TYPE_BEADS_GRAPH, BeadIssue, EDITABLE_STATUSES } from "./types";
-import { bdGraphDot, bdShow, bdUpdate, BdError, BdOptions } from "./bd";
+import { bdExport, bdShow, bdUpdate, BdError, BdOptions } from "./bd";
+import { buildGraphDot, parseExportJsonl, GraphBuildError } from "./graphBuilder";
 import { renderPriorityDot } from "./row";
 
 /**
@@ -60,12 +61,13 @@ function nodeId(g: Element): string | undefined {
 /**
  * Dependency-graph tab.
  *
- * bd's `--dot` output is the same clean, layered DAG as its terminal view (a
- * `rank=same` sub-graph per dependency layer, bd's status colours per node), so
- * we let Graphviz do the layout — via a bundled WASM build — and render the
- * resulting SVG straight into the pane. That replaces bd's `--html` output,
- * whose force-directed D3 layout collapses into an unreadable hairball past a
- * few dozen nodes.
+ * The DOT we render is the same clean, layered DAG as bd's terminal view (a
+ * `rank=same` sub-graph per dependency layer, bd's status colours per node) —
+ * built locally from one `bd export` (see graphBuilder.ts) rather than by
+ * shelling out to bd's own very slow `--dot`. Graphviz does the layout, via a
+ * bundled WASM build, and the resulting SVG is rendered straight into the
+ * pane. That replaces bd's `--html` output, whose force-directed D3 layout
+ * collapses into an unreadable hairball past a few dozen nodes.
  *
  * The SVG lives in the pane's own DOM (no iframe) so a node click can call
  * `plugin.openBead()` directly; see `sanitize()` for what that costs us.
@@ -81,9 +83,9 @@ export class BeadsGraphView extends ItemView {
 	private dot?: string;
 	private loadSeq = 0;
 
-	// Cancellation + elapsed-time tracking for the in-flight `bd graph --dot`
-	// call. `bd` is a single process (confirmed no detached Dolt child), so
-	// aborting it is a clean kill, not an orphan risk — see bd.ts.
+	// Cancellation + elapsed-time tracking for the in-flight `bd export` call.
+	// `bd` is a single process (confirmed no detached Dolt child), so aborting
+	// it is a clean kill, not an orphan risk — see bd.ts.
 	private abortController?: AbortController;
 	private loadStartedAt = 0;
 	private elapsedSec = 0;
@@ -158,10 +160,15 @@ export class BeadsGraphView extends ItemView {
 		this.startElapsedTimer();
 		this.render();
 		try {
-			const dot = await bdGraphDot(
-				{ ...opts, signal: this.abortController.signal },
-				{ id: this.state.id, all: this.state.all },
-			);
+			// One `bd export` for the whole repo, then the scoping/layering/DOT
+			// emission happens locally — see graphBuilder.ts for why (bd's own
+			// `--dot` closure walk cost 8–142s where the export costs ~1.5s).
+			const jsonl = await bdExport({ ...opts, signal: this.abortController.signal });
+			if (seq !== this.loadSeq) return;
+			const dot = buildGraphDot(parseExportJsonl(jsonl), {
+				id: this.state.id,
+				all: this.state.all,
+			});
 			if (seq !== this.loadSeq) return;
 			this.dot = dot;
 			this.resetZoom(); // a new graph starts fitted, not wherever the last one was panned to
@@ -169,13 +176,21 @@ export class BeadsGraphView extends ItemView {
 			if (seq !== this.loadSeq) return;
 			if (e instanceof BdError && e.aborted) {
 				this.cancelled = true;
+			} else if (e instanceof BdError || e instanceof GraphBuildError) {
+				this.error = e.message;
 			} else {
-				this.error = e instanceof BdError ? e.message : String(e);
+				this.error = String(e);
 			}
 		} finally {
-			this.stopElapsedTimer();
-			this.abortController = undefined;
+			// Only the newest load owns the shared timer/controller. A superseded
+			// load clearing them would stop the *current* load's elapsed counter and
+			// null out the controller its Cancel button aborts through, leaving the
+			// user watching a frozen counter with a dead Cancel. The superseded
+			// load's own controller reference is already gone (overwritten by the
+			// newer load above), so skipping the clear leaks nothing.
 			if (seq === this.loadSeq) {
+				this.stopElapsedTimer();
+				this.abortController = undefined;
 				this.loading = false;
 				this.render();
 			}
@@ -205,7 +220,7 @@ export class BeadsGraphView extends ItemView {
 		return Promise.resolve();
 	}
 
-	/** Cancel the in-flight `bd graph --dot` call. bd's process dies cleanly (SIGTERM), no orphan risk. */
+	/** Cancel the in-flight `bd export` call. bd's process dies cleanly (SIGTERM), no orphan risk. */
 	private cancelLoad(): void {
 		this.abortController?.abort();
 	}
@@ -255,18 +270,14 @@ export class BeadsGraphView extends ItemView {
 			return;
 		}
 		if (this.loading && !this.dot) {
-			// Both a single epic and `--all` can genuinely take well over a
-			// minute on a large repo (bd/Dolt walks the whole dependency
-			// closure) — say so up front, and keep ticking the elapsed time so
-			// "still working" stays visibly distinct from "hung".
-			const scopeNote = this.state.id
-				? " — this can take a while for a large epic"
-				: this.state.all
-					? " — this can take a while for the whole repo"
-					: "";
+			// A graph is one `bd export` of the whole issue database — a couple
+			// of seconds on a large repo, not the minutes bd's own closure walk
+			// used to cost. It is still a Dolt read that grows with repo size,
+			// so keep ticking the elapsed time: "still working" has to stay
+			// visibly distinct from "hung", and Cancel stays available.
 			root.createDiv({
 				cls: "beads-empty",
-				text: `Building graph${scopeNote}… (${this.elapsedSec}s elapsed)`,
+				text: `Building graph — reading the issue database… (${this.elapsedSec}s elapsed)`,
 			});
 			return;
 		}
