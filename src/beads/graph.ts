@@ -8,6 +8,7 @@ import { VIEW_TYPE_BEADS_GRAPH, BeadIssue, EDITABLE_STATUSES } from "./types";
 import { bdExport, bdShow, bdUpdate, BdError, BdOptions } from "./bd";
 import { buildGraphDot, parseExportJsonl, GraphBuildError } from "./graphBuilder";
 import { renderPriorityDot } from "./row";
+import { makePaneResizable } from "../utils";
 
 /**
  * Graphviz-as-WASM, loaded once per session.
@@ -249,6 +250,11 @@ export class BeadsGraphView extends ItemView {
 	/** Called by `BeadsFeature` on a `.beads` watcher/timer tick — reloads without disturbing the current pan/zoom. */
 	refreshFromExternalChange(): void {
 		if (this.loading) return; // a load already in flight will pick up the change
+		// A node popup's own `bd show` touches `.beads/`, which re-triggers this
+		// via the watcher a moment later — reloading now would blow away the
+		// popup's DOM (render() empties the canvas) right after opening it. Skip;
+		// the next timer/watcher tick after the popup closes will catch up.
+		if (this.popupEl) return;
 		void this.loadGraph(true);
 	}
 
@@ -281,6 +287,7 @@ export class BeadsGraphView extends ItemView {
 
 		pane.empty();
 		pane.removeClass("beads-hidden");
+		makePaneResizable(pane);
 
 		const bar = pane.createDiv({ cls: "beads-agent-bar" });
 		const label = bar.createDiv({ cls: "beads-agent-title", text: request.title });

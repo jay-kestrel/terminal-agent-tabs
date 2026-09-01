@@ -234,14 +234,51 @@ export async function bdBlocked(opts: BdOptions): Promise<BeadIssue[]> {
 	return parseIssues(stdout);
 }
 
-/** `bd list --status <status> --json` — issues in one stored status. */
+/**
+ * `bd list --status <status> --json` — issues in one stored status.
+ *
+ * `sort` is bd's own ordering (priority, created, updated, closed, id, …),
+ * applied server-side BEFORE the limit. That matters: the pane pages 25 at a
+ * time, so sorting client-side would only ever reorder whichever 25 bd
+ * happened to return first. The Closed tab passes `closed` so the most
+ * recently closed work lands on page one — bd's default order is not recency,
+ * and without this a bead closed today can sit 100+ rows deep behind ones
+ * closed weeks earlier.
+ */
 export async function bdByStatus(
 	opts: BdOptions,
 	status: string,
 	limit: number,
+	sort?: string,
+): Promise<BeadIssue[]> {
+	const args = ["list", "--status", status, "--json", "--no-pager", "--limit", String(limit)];
+	if (sort) args.push("--sort", sort);
+	const { stdout } = await run(args, opts);
+	return parseIssues(stdout);
+}
+
+/**
+ * `bd search --json --status <status> -- <query>` — text search over title and
+ * ID run BY BD, against the whole database rather than the loaded page.
+ *
+ * This exists because filtering `tab.issues` client-side can only ever match
+ * within the current page: with PAGE=25 and hundreds of closed issues, typing
+ * an id that exists but sits deeper renders "No issues match", which is
+ * indistinguishable from "that bead does not exist". Search has to reach the
+ * database or it silently lies about absence.
+ *
+ * `status` is passed straight through as bd's filter — note bd EXCLUDES closed
+ * by default, so a caller wanting closed rows must say so explicitly
+ * ("closed", or "all" to span every status).
+ */
+export async function bdSearch(
+	opts: BdOptions,
+	query: string,
+	status: string,
+	limit: number,
 ): Promise<BeadIssue[]> {
 	const { stdout } = await run(
-		["list", "--status", status, "--json", "--no-pager", "--limit", String(limit)],
+		["search", "--json", "--status", status, "--limit", String(limit), "--", query],
 		opts,
 	);
 	return parseIssues(stdout);
@@ -288,9 +325,13 @@ export interface BdEpicStatus {
 }
 
 /**
- * `bd epic status --json` — every open epic with bd's child rollup, in ONE
- * call. bd computes `total_children`/`closed_children`; we never walk the
- * parent-child edges ourselves to re-derive them. Closed epics are not listed.
+ * `bd epic status --json` — every epic with bd's child rollup, in ONE call. bd
+ * computes `total_children`/`closed_children`; we never walk the parent-child
+ * edges ourselves to re-derive them.
+ *
+ * CLOSED EPICS ARE INCLUDED. This comment previously claimed the opposite,
+ * which sent a search for a missing closed epic looking in the wrong layer —
+ * bd returns them, and the filtering that hid one was ours.
  */
 export async function bdEpicStatus(opts: BdOptions): Promise<BdEpicStatus[]> {
 	const { stdout } = await run(["epic", "status", "--json"], opts);

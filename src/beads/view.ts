@@ -10,6 +10,7 @@ import {
 	bdByStatus,
 	bdChildren,
 	bdEpicStatus,
+	bdSearch,
 	bdStatusCounts,
 	BdError,
 	BdOptions,
@@ -35,6 +36,15 @@ const TABS: TabDef[] = [
 	{ key: "closed", label: "Closed", countKey: "closed_issues" },
 ];
 const PAGE = 25;
+/**
+ * Row cap for a search-backed fetch. A search asks a whole-database question,
+ * so it must not be answered out of one PAGE — but it still needs a ceiling so
+ * a one-letter query can't drag every issue into the pane. Deliberately well
+ * above any plausible result set a human will read.
+ */
+const SEARCH_FETCH = 500;
+/** Debounce before a keystroke turns into a bd process. */
+const SEARCH_DEBOUNCE_MS = 250;
 
 interface TabState {
 	issues: BeadIssue[];
@@ -135,7 +145,7 @@ export class BeadsView extends ItemView {
 	private epics: EpicsState = emptyEpicsState();
 	private baseState: "ok" | "no-root" | "no-db" = "no-root";
 	private loadSeq = 0;
-	/** Label/assignee/priority/type filter for the active tab's list (Epics tab excluded). */
+	/** Label/assignee/priority/type filter for the active tab's list, epics included (filtered on the epic row itself, not its children). */
 	private filters: FilterState = emptyFilters();
 	/**
 	 * Container for just the row list + load-more button, filled in by
@@ -149,6 +159,15 @@ export class BeadsView extends ItemView {
 	 */
 	private listWrap: HTMLElement | null = null;
 	private clearFilterBtn: HTMLElement | null = null;
+	/** Pending debounce for the search box (see `SEARCH_DEBOUNCE_MS`). */
+	private searchTimer: number | null = null;
+	/**
+	 * Caret offset to restore into the rebuilt search box, or null when the box
+	 * did not have focus. A search now re-queries bd, and `loadTab` ends in a
+	 * full `render()` that replaces the input element — so without this, typing
+	 * a query loses focus the moment its results land.
+	 */
+	private searchCaret: number | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -181,6 +200,12 @@ export class BeadsView extends ItemView {
 		// Synchronous teardown, kept Promise-returning to match ItemView.onClose.
 		// (Was `async` in the standalone plugin; the merged repo's eslint config
 		// errors on an async function with no await.)
+		if (this.searchTimer !== null) {
+			// Otherwise a keystroke landing just before close spawns a bd process
+			// against a torn-down view.
+			window.clearTimeout(this.searchTimer);
+			this.searchTimer = null;
+		}
 		for (const t of TABS) this.tabs[t.key] = this.emptyTab();
 		this.epics = emptyEpicsState();
 		return Promise.resolve();
@@ -257,18 +282,36 @@ export class BeadsView extends ItemView {
 		await this.loadTab(this.active, seq);
 	}
 
+	/**
+	 * One tab's rows. When a search is active this asks BD for the answer
+	 * instead of returning a page for `matchesFilters` to sieve — filtering a
+	 * 25-row page cannot find row 134, and reports its own blindness as "no
+	 * match", which reads exactly like the bead not existing.
+	 *
+	 * The two dependency-computed tabs can't be expressed as a `bd search`
+	 * (`ready` and `blocked` are graph results, not stored statuses), so they
+	 * stay client-filtered — but `ready` widens its fetch so the sieve sees the
+	 * whole set, and `blocked` already loads unpaginated.
+	 */
 	private fetchTab(
 		key: string,
 		opts: BdOptions,
 		limit: number,
 	): Promise<BeadIssue[]> {
+		const q = this.filters.search.trim();
 		switch (key) {
 			case "ready":
-				return bdReady(opts, limit);
+				return bdReady(opts, q ? SEARCH_FETCH : limit);
 			case "in_progress":
-				return bdByStatus(opts, "in_progress", limit);
+				return q
+					? bdSearch(opts, q, "in_progress", SEARCH_FETCH)
+					: bdByStatus(opts, "in_progress", limit);
 			case "closed":
-				return bdByStatus(opts, "closed", limit);
+				// `--sort closed` server-side: bd's default order is not recency,
+				// so without it today's closures land pages deep.
+				return q
+					? bdSearch(opts, q, "closed", SEARCH_FETCH)
+					: bdByStatus(opts, "closed", limit, "closed");
 			case "blocked":
 				return bdBlocked(opts); // no server-side limit; paginated client-side
 			default:
@@ -363,6 +406,13 @@ export class BeadsView extends ItemView {
 			if (key === "blocked") {
 				tab.hasMore = sorted.length > tab.limit;
 				tab.issues = sorted.slice(0, tab.limit);
+			} else if (this.filters.search.trim()) {
+				// A search fetched up to SEARCH_FETCH, not `tab.limit`, so the
+				// page-sized "did we fill the page?" test below would both
+				// mis-read as more-to-load and offer a Load more that re-runs
+				// the same query. The search result IS the whole answer.
+				tab.hasMore = false;
+				tab.issues = sorted;
 			} else {
 				tab.hasMore = fetched.length === tab.limit;
 				tab.issues = sorted;
@@ -440,14 +490,27 @@ export class BeadsView extends ItemView {
 			attr: { type: "search", placeholder: "Search…" },
 		});
 		search.value = this.filters.search;
-		// Targeted update, not a full `this.render()`: the search box itself is
-		// never touched, so focus/cursor position are naturally preserved — no
-		// restore-after-rebuild hack needed — and a keystroke no longer rebuilds
-		// the tab bar, header and every row's icons just to refilter an
-		// already-loaded list.
+		if (this.searchCaret !== null) {
+			const caret = Math.min(this.searchCaret, search.value.length);
+			this.searchCaret = null;
+			search.focus();
+			search.setSelectionRange(caret, caret);
+		}
+		// Two-stage on purpose. `refreshList()` re-sieves the rows already in
+		// hand so the list reacts on the keystroke, then a debounced `loadTab`
+		// asks bd the question the loaded page cannot answer (see `fetchTab`).
+		// The Epics tab is exempt: its one `bd epic status` call already returns
+		// every epic, so its rows are complete and a re-fetch would buy nothing.
 		search.oninput = () => {
 			this.filters.search = search.value;
 			this.refreshList();
+			if (this.active === EPICS_TAB) return;
+			if (this.searchTimer !== null) window.clearTimeout(this.searchTimer);
+			this.searchTimer = window.setTimeout(() => {
+				this.searchTimer = null;
+				this.searchCaret = search.selectionStart ?? search.value.length;
+				void this.loadTab(this.active);
+			}, SEARCH_DEBOUNCE_MS);
 		};
 
 		const addSelect = (
@@ -516,8 +579,17 @@ export class BeadsView extends ItemView {
 		});
 		clear.toggleClass("beads-hidden", !hasActiveFilter(this.filters));
 		clear.onclick = () => {
+			const wasSearching = this.filters.search.trim() !== "";
 			this.filters = emptyFilters();
-			this.render();
+			if (this.searchTimer !== null) {
+				window.clearTimeout(this.searchTimer);
+				this.searchTimer = null;
+			}
+			// Clearing a search doesn't just widen a client-side sieve any more —
+			// the tab is currently holding search results, so it has to re-fetch
+			// its own first page or it would keep showing them unfiltered.
+			if (wasSearching && this.active !== EPICS_TAB) void this.loadTab(this.active);
+			else this.render();
 		};
 		this.clearFilterBtn = clear;
 	}
@@ -535,6 +607,26 @@ export class BeadsView extends ItemView {
 		}
 		this.clearFilterBtn?.toggleClass("beads-hidden", !hasActiveFilter(this.filters));
 		wrap.empty();
+
+		if (this.active === EPICS_TAB) {
+			const visible = this.epics.epics.filter((e) => matchesFilters(e.epic, this.filters));
+			if (visible.length === 0) {
+				wrap.createDiv({
+					cls: "beads-empty",
+					text: "No epics match the current filters.",
+				});
+				return;
+			}
+			renderEpics(wrap, { ...this.epics, epics: visible }, {
+				onToggle: (id) => this.toggleEpic(id),
+				onOpen: (i) => this.openBead(i),
+				onGraph: (i) => void this.plugin.openGraph({ id: i.id }),
+				onAddChild: (i) => void this.plugin.newBead({ parent: i.id }),
+				onAddDependent: (i) => void this.plugin.newBead({ blockedBy: i.id }),
+			});
+			return;
+		}
+
 		const tab = this.tabs[this.active];
 		const visible = tab.issues.filter((i) => matchesFilters(i, this.filters));
 
@@ -623,13 +715,25 @@ export class BeadsView extends ItemView {
 		const body = root.createDiv({ cls: "beads-tab-body" });
 
 		if (this.active === EPICS_TAB) {
-			renderEpics(body, this.epics, {
-				onToggle: (id) => this.toggleEpic(id),
-				onOpen: (i) => this.openBead(i),
-				onGraph: (i) => void this.plugin.openGraph({ id: i.id }),
-				onAddChild: (i) => void this.plugin.newBead({ parent: i.id }),
-				onAddDependent: (i) => void this.plugin.newBead({ blockedBy: i.id }),
-			});
+			if (this.epics.error) {
+				body.createDiv({ cls: "beads-empty beads-error", text: this.epics.error });
+				return;
+			}
+			if (this.epics.loading && this.epics.epics.length === 0) {
+				body.createDiv({ cls: "beads-empty", text: "Loading…" });
+				return;
+			}
+			if (this.epics.epics.length === 0) {
+				body.createDiv({ cls: "beads-empty", text: "No open epics." });
+				return;
+			}
+			// Same search/label/assignee/priority filter bar as the other tabs,
+			// applied to the epic rows themselves (not their children — those load
+			// lazily per epic on expand, so filtering into them would mean eagerly
+			// fetching every epic's children just to search).
+			this.renderFilterBar(body, this.epics.epics.map((e) => e.epic));
+			this.listWrap = body.createDiv({ cls: "beads-tab-results" });
+			this.refreshList();
 			return;
 		}
 

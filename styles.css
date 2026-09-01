@@ -1328,6 +1328,15 @@ select.beads-prop-input {
 	border-top: 1px solid var(--background-modifier-border);
 	background-color: var(--background-primary);
 }
+.beads-agent-resize-handle {
+	flex: 0 0 auto;
+	height: 6px;
+	margin-top: -1px; /* sit on top of the pane's own border-top */
+	cursor: ns-resize;
+}
+.beads-agent-resize-handle:hover {
+	background-color: var(--interactive-accent);
+}
 .beads-agent-bar {
 	flex: 0 0 auto;
 	display: flex;

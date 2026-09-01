@@ -49,3 +49,8 @@ docs/
 doc/
 AGENTS.md
 scripts/install-v2.sh
+
+# Plugin runtime output (session transcripts, terminal scrollback, hook events)
+agent-events.jsonl
+scrollback/
+shell-integration/

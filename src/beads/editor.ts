@@ -21,6 +21,7 @@ import {
 	EDITABLE_STATUSES,
 } from "./types";
 import { renderPriorityDot } from "./row";
+import { makePaneResizable } from "../utils";
 import {
 	bdShow,
 	bdUpdate,
@@ -180,6 +181,7 @@ export class BeadEditorView extends ItemView {
 
 		pane.empty();
 		pane.removeClass("beads-hidden");
+		makePaneResizable(pane);
 
 		const bar = pane.createDiv({ cls: "beads-agent-bar" });
 		const label = bar.createDiv({ cls: "beads-agent-title", text: request.title });
