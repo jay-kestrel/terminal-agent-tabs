@@ -86,17 +86,18 @@ export function newHarnessId(): string {
  * Both pass the prompt as one positional argument, which is the only shape
  * common enough across CLI agents to be a reasonable starting guess.
  *
- * "Claude Code" links to the host's `sessionCliId: "claude"` profile, which
- * `migrateCliProfiles` (SettingsMigration.ts) guarantees always exists — so
- * "Work the bead" opens an in-app session tab out of the box instead of
- * defaulting every fresh install to the external-terminal fallback button.
- * "Codex CLI" has no such guarantee (the host doesn't ship a default codex
- * profile), so it stays copy-only until the user links one themselves.
+ * All four link to a host `sessionCliId` — "claude", "codex", "cursor",
+ * "antigravity" — that `migrateCliProfiles` (SettingsMigration.ts) guarantees
+ * always exists, so "Work the bead" opens an in-app session tab for any of
+ * them out of the box instead of defaulting every fresh install to the
+ * external-terminal fallback button.
  */
 export function defaultHarnesses(): HarnessProfile[] {
 	return [
 		{ id: newHarnessId(), name: "Claude Code", command: "claude {prompt}", model: "", sessionCliId: "claude" },
-		{ id: newHarnessId(), name: "Codex CLI", command: "codex {prompt}", model: "" },
+		{ id: newHarnessId(), name: "Codex CLI", command: "codex {prompt}", model: "", sessionCliId: "codex" },
+		{ id: newHarnessId(), name: "Cursor CLI", command: "agent {prompt}", model: "", sessionCliId: "cursor" },
+		{ id: newHarnessId(), name: "Antigravity CLI", command: "agy {prompt}", model: "", sessionCliId: "antigravity" },
 	];
 }
 

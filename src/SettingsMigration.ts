@@ -63,6 +63,35 @@ function ensureClaudeProfile(profiles: CliProfile[], legacyClaudePath?: string):
 	];
 }
 
+/**
+ * Same guarantee as `ensureClaudeProfile`, generalized for any other CLI we
+ * want a "just works" default profile for. Never touches an existing profile
+ * with the same id — a user's own edit always wins.
+ *
+ * `resumeArgs` is left empty even for CLIs with real resume support (Codex):
+ * `SessionManager.resolveResumeStrategy` infers 'assign-id'/'continue-latest'
+ * from `profile.id`/`executablePath` on its own (see there), and that Tier1
+ * path takes over before `resumeArgs` (the legacy interactive-resume
+ * fallback) is ever consulted — so stating it here would be dead weight.
+ */
+function ensureProfile(
+	profiles: CliProfile[],
+	defaults: { id: string; displayName: string; executablePath: string; supportsResume: boolean },
+): CliProfile[] {
+	const baseProfiles = dedupeProfiles(profiles);
+	if (baseProfiles.some((profile) => profile.id === defaults.id)) {
+		return baseProfiles;
+	}
+	return [...baseProfiles, { ...defaults, defaultArgs: [], resumeArgs: [] }];
+}
+
+/** CLI profiles guaranteed to exist (beyond Claude, which also migrates a legacy path). */
+const OTHER_DEFAULT_PROFILES: { id: string; displayName: string; executablePath: string; supportsResume: boolean }[] = [
+	{ id: 'codex', displayName: 'Codex', executablePath: 'codex', supportsResume: true },
+	{ id: 'cursor', displayName: 'Cursor', executablePath: 'agent', supportsResume: false },
+	{ id: 'antigravity', displayName: 'Antigravity', executablePath: 'agy', supportsResume: false },
+];
+
 function parseStringArray(arr: unknown): string[] {
 	if (!Array.isArray(arr)) return [];
 	return arr.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter(Boolean);
@@ -163,6 +192,13 @@ function migrateFromObject(raw: Record<string, unknown>, loaded: LegacySettingsS
  * Migrate CLI profiles from any legacy format to the current CliProfile[] format.
  */
 export function migrateCliProfiles(loaded: LegacySettingsShape): CliProfile[] {
+	return OTHER_DEFAULT_PROFILES.reduce(
+		(profiles, defaults) => ensureProfile(profiles, defaults),
+		migrateCliProfilesBase(loaded),
+	);
+}
+
+function migrateCliProfilesBase(loaded: LegacySettingsShape): CliProfile[] {
 	const raw = loaded.cliProfiles;
 
 	if (Array.isArray(raw)) {

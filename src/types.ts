@@ -163,6 +163,30 @@ export const DEFAULT_SETTINGS: ClaudeCodeTabsSettings = {
 			defaultArgs: [],
 			supportsResume: true,
 			resumeArgs: ['--resume']
+		},
+		{
+			id: 'codex',
+			displayName: 'Codex',
+			executablePath: 'codex',
+			defaultArgs: [],
+			supportsResume: true,
+			resumeArgs: []
+		},
+		{
+			id: 'cursor',
+			displayName: 'Cursor',
+			executablePath: 'agent',
+			defaultArgs: [],
+			supportsResume: false,
+			resumeArgs: []
+		},
+		{
+			id: 'antigravity',
+			displayName: 'Antigravity',
+			executablePath: 'agy',
+			defaultArgs: [],
+			supportsResume: false,
+			resumeArgs: []
 		}
 	]
 };
