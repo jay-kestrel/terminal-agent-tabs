@@ -1,8 +1,10 @@
 import {
+	App,
 	ItemView,
 	WorkspaceLeaf,
 	Notice,
 	MarkdownRenderer,
+	Modal,
 	ViewStateResult,
 } from "obsidian";
 import { existsSync } from "fs";
@@ -26,6 +28,7 @@ import {
 	bdShow,
 	bdUpdate,
 	bdCreate,
+	bdDelete,
 	bdDepList,
 	bdComments,
 	bdCommentAdd,
@@ -76,6 +79,8 @@ export class BeadEditorView extends ItemView {
 	private orig: EditModel = blankModel();
 	private saveBtn: HTMLButtonElement | null = null;
 	private revertBtn: HTMLButtonElement | null = null;
+	/** Guards `deleteBead()` against a double-click firing two `bd delete` calls for the same bead. */
+	private deleting = false;
 
 	// The bead body and the agent pane are SIBLINGS, not nested: render() empties
 	// its own root on every reload/revert, and a terminal inside that root would
@@ -337,6 +342,21 @@ export class BeadEditorView extends ItemView {
 			this.revertBtn.disabled = true;
 			this.saveBtn.onclick = () => void this.save();
 			this.revertBtn.onclick = () => this.render(); // re-derive from this.issue
+
+			// Separated from Revert/Save by its own class (not just position) so
+			// it can't be confused for one more editing action — this is the only
+			// irreversible one in the toolbar.
+			const deleteBtn = actions.createEl("button", { cls: "mod-warning beads-editor-delete", text: "Delete" });
+			deleteBtn.onclick = () => {
+				// Captured now, not re-read from `this.issue` inside the confirm
+				// callback: the confirm click can land an arbitrary amount of time
+				// after this modal opened, and `this.issue`/`this.id` can be
+				// reassigned in the meantime (setState navigating this same tab to a
+				// different bead) — the id the user confirmed deleting must be the
+				// one actually deleted, not whatever the view has moved on to.
+				const issue = this.issue;
+				if (issue) new ConfirmDeleteModal(this.app, issue, () => void this.deleteBead(issue.id)).open();
+			};
 		}
 
 		// Title — prominent, like a note's inline title.
@@ -707,6 +727,63 @@ export class BeadEditorView extends ItemView {
 				},
 			);
 		};
+	}
+
+	/** Permanently delete this bead. Only reached from `ConfirmDeleteModal`'s explicit confirm click. */
+	private async deleteBead(confirmedId: string): Promise<void> {
+		if (this.deleting) return; // already deleting this bead — don't fire a second `bd delete`
+		if (this.id !== confirmedId) return; // navigated to a different bead since the modal opened
+		const opts = this.resolveOpts();
+		if (!opts) return;
+		this.deleting = true;
+		try {
+			await bdDelete(opts, confirmedId);
+			new Notice(`Beads: deleted ${confirmedId}`);
+			this.plugin.refreshViews();
+			// The tab may already be closed by the time this await resolves.
+			if (this.contentEl.isConnected) this.leaf.detach(); // nothing left here to show or save
+		} catch (e) {
+			new Notice(`Beads: ${e instanceof BdError ? e.message : String(e)}`, 8000);
+		} finally {
+			this.deleting = false;
+		}
+	}
+}
+
+/**
+ * The one confirmation step between the Delete button and an irreversible
+ * `bd delete --force`. Spells out exactly what it does, in bd's own terms
+ * (dependency links removed, references updated), not just "are you sure?".
+ */
+class ConfirmDeleteModal extends Modal {
+	constructor(
+		app: App,
+		private issue: BeadIssue,
+		private onConfirm: () => void,
+	) {
+		super(app);
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		this.titleEl.setText(`Delete ${this.issue.id}?`);
+		contentEl.createDiv({
+			cls: "beads-delete-warning",
+			text: `This permanently deletes "${this.issue.title}". Every dependency link involving it is removed — anything it was blocking becomes unblocked — and this cannot be undone.`,
+		});
+		const actions = contentEl.createDiv({ cls: "beads-delete-actions" });
+		const cancelBtn = actions.createEl("button", { text: "Cancel" });
+		cancelBtn.onclick = () => this.close();
+		const deleteBtn = actions.createEl("button", { cls: "mod-warning", text: "Delete permanently" });
+		deleteBtn.onclick = () => {
+			this.close();
+			this.onConfirm();
+		};
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
 	}
 }
 

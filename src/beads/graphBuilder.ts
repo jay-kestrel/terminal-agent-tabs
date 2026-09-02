@@ -68,6 +68,8 @@
  * differs (deliberately, and it fixes a bug).
  */
 
+import type { BdDepType } from "./bd";
+
 /** One entry of an issue's `dependencies[]` array in `bd export` JSONL. */
 export interface ExportDependency {
 	/** The dependent issue (the one that owns this record). */
@@ -173,6 +175,41 @@ interface Edge {
 	src: string;
 	dst: string;
 	type: string;
+}
+
+/**
+ * The reverse of the DOT-emission loop below: given a Graphviz-rendered edge
+ * (`g.edge`), read back the two bead ids and dependency type it draws. The
+ * graph view's edge-click handler uses this to know exactly what a "Remove
+ * dependency" click is about to remove.
+ *
+ * `src`/`dst` come from the `<title>src->dst</title>` Graphviz emits for
+ * every `"src" -> "dst"` DOT statement — `src` is the blocker (dependency),
+ * `dst` the blocked (dependent), matching `bd dep add`'s own
+ * `<issue-id> <depends-on-id>` order reversed. Bead ids never contain the
+ * literal substring "->", so splitting on its first occurrence is safe.
+ *
+ * `type` comes off the edge's own `class` attribute — see the `dep-${e.type}`
+ * comment in the emission loop below for why that's there at all. Only
+ * "blocks" and "parent-child" are ever drawn (EDGE_STYLE), so anything else
+ * (a missing class, a future edge type) falls back to "blocks" rather than
+ * mis-parsing — the same default `bdDepAdd` itself uses.
+ *
+ * Takes a duck-typed subset of `Element` (just `querySelector` + `classList`)
+ * rather than the real DOM type, so this stays testable without a DOM.
+ */
+export function edgeEndpoints(
+	g: Pick<Element, "querySelector" | "classList">,
+): { src: string; dst: string; type: BdDepType } | undefined {
+	const title = g.querySelector("title")?.textContent?.trim();
+	if (!title) return undefined;
+	const i = title.indexOf("->");
+	if (i < 0) return undefined;
+	const src = title.slice(0, i);
+	const dst = title.slice(i + 2);
+	if (!src || !dst) return undefined;
+	const type: BdDepType = g.classList.contains("dep-parent-child") ? "parent-child" : "blocks";
+	return { src, dst, type };
 }
 
 /**
@@ -296,7 +333,7 @@ function collectEdges(issues: ExportIssue[], known: Set<string>): Edge[] {
 			const src = dep.depends_on_id;
 			const dst = dep.issue_id;
 			if (!known.has(src) || !known.has(dst)) continue;
-			const key = `${src} ${dst} ${dep.type}`;
+			const key = `${src}\u0000${dst}\u0000${dep.type}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
 			edges.push({ src, dst, type: dep.type });
@@ -416,7 +453,15 @@ export function buildGraphDot(issues: ExportIssue[], target: GraphTarget): strin
 		if (!nodes.has(e.src) || !nodes.has(e.dst)) continue;
 		const style = EDGE_STYLE[e.type];
 		if (!style) continue; // relates-to & friends connect components but aren't drawn
-		lines.push(`  "${dotEscape(e.src)}" -> "${dotEscape(e.dst)}" [${style}];`);
+		// A THIRD deliberate divergence from bd's own `--dot` output (see the
+		// module doc comment): `class` isn't one of the attributes bd emits, but
+		// Graphviz supports it and carries it straight into the rendered SVG's
+		// `<g class="edge dep-...">`, which is how the graph view tells a
+		// `blocks` edge from a `parent-child` one when a click on it needs to
+		// know which kind it's about to remove (see graph.ts's `edgeEndpoints`).
+		// `e.type` is one of EDGE_STYLE's own keys, never issue-authored text,
+		// so it needs no DOT-literal escaping.
+		lines.push(`  "${dotEscape(e.src)}" -> "${dotEscape(e.dst)}" [${style}, class="dep-${e.type}"];`);
 	}
 	lines.push("}", "");
 	return lines.join("\n");

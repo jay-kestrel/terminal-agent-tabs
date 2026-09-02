@@ -26,7 +26,7 @@ vi.mock("child_process", () => ({
 	},
 }));
 
-import { bdByStatus, bdSearch, bdEpicStatus } from "../beads/bd";
+import { bdByStatus, bdSearch, bdEpicStatus, bdDepAdd, bdDepRemove, bdDelete } from "../beads/bd";
 
 const OPTS = { bdPath: "bd", cwd: "/repo" };
 
@@ -86,5 +86,38 @@ describe("bdEpicStatus", () => {
 		// which sent a search for a missing closed epic looking in the wrong layer.
 		expect(lastArgv()).toBe("epic status --json");
 		expect(lastArgv()).not.toContain("--status");
+	});
+});
+
+/**
+ * These three pin argv for the graph view's dependency-editing mutations
+ * (shift-drag to add, edge-click to remove, "Delete" on the bead editor).
+ * Unlike the read-path tests above, a wrong argv here doesn't render an empty
+ * list — it silently creates, removes, or deletes the wrong thing, so pinning
+ * ARGUMENT ORDER (not just presence) is the point.
+ */
+describe("bdDepAdd", () => {
+	it("makes the first id depend on the second, defaulting to a blocks edge", async () => {
+		await bdDepAdd(OPTS, "bd-2", "bd-1");
+		expect(lastArgv()).toBe("dep add --type=blocks -- bd-2 bd-1");
+	});
+
+	it("passes an explicit type through", async () => {
+		await bdDepAdd(OPTS, "bd-2", "bd-1", "parent-child");
+		expect(lastArgv()).toBe("dep add --type=parent-child -- bd-2 bd-1");
+	});
+});
+
+describe("bdDepRemove", () => {
+	it("keeps the same id order as bdDepAdd (first id depends on second)", async () => {
+		await bdDepRemove(OPTS, "bd-2", "bd-1");
+		expect(lastArgv()).toBe("dep remove -- bd-2 bd-1");
+	});
+});
+
+describe("bdDelete", () => {
+	it("always passes --force, since bd's own default is a dry-run preview, never an actual delete", async () => {
+		await bdDelete(OPTS, "bd-1");
+		expect(lastArgv()).toBe("delete --force -- bd-1");
 	});
 });

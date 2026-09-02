@@ -541,6 +541,35 @@ export async function bdDepAdd(
 	invalidateReadCache();
 }
 
+/**
+ * `bd dep remove -- <issueId> <dependsOnId>` — the inverse of `bdDepAdd`:
+ * `issueId` no longer depends on `dependsOnId`. No `--type` needed — bd
+ * matches on the two ids regardless of dependency type.
+ */
+export async function bdDepRemove(
+	opts: BdOptions,
+	issueId: string,
+	dependsOnId: string,
+): Promise<void> {
+	await run(["dep", "remove", "--", issueId, dependsOnId], opts);
+	invalidateReadCache();
+}
+
+/**
+ * `bd delete --force -- <id>` — permanently delete an issue: removes every
+ * dependency link involving it (either direction, any type) and updates text
+ * references in connected issues to "[deleted:ID]". Cannot be undone.
+ *
+ * bd's own default (no `--force`) is a dry-run preview, never an actual
+ * delete — `--force` is what makes it real, so this always passes it. The
+ * caller is responsible for getting the user's explicit confirmation first;
+ * this function performs no dry-run/preview step of its own.
+ */
+export async function bdDelete(opts: BdOptions, id: string): Promise<void> {
+	await run(["delete", "--force", "--", id], opts);
+	invalidateReadCache();
+}
+
 // The graph view used to shell out to `bd graph --dot`, which walks the
 // dependency closure inside bd/Dolt with an N+1-shaped query per node —
 // measured on a real ~1226-issue repo: 8s for a single non-epic issue, 49s for

@@ -837,6 +837,18 @@
 	display: flex;
 	gap: 6px;
 }
+.beads-editor-delete {
+	margin-left: 12px; /* visually separated from Revert/Save — the only irreversible action here */
+}
+.beads-delete-warning {
+	color: var(--text-muted);
+	margin-bottom: 16px;
+}
+.beads-delete-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
 /* Title — like a note's inline title */
 .beads-editor-title {
 	width: 100%;
@@ -1144,6 +1156,20 @@ select.beads-prop-input {
 .beads-graph-svg g.node:hover > path {
 	stroke: var(--interactive-accent);
 	stroke-width: 2;
+}
+/* Edges are clickable too (removes that dependency — see graph.ts
+   showEdgePopup). The path itself is thin, so pointer-events stays on just
+   its stroke by default; the hover highlight is the only cue it's a target. */
+.beads-graph-svg g.edge {
+	cursor: pointer;
+}
+.beads-graph-svg g.edge:hover > path {
+	stroke: var(--interactive-accent);
+	stroke-width: 2.5;
+}
+.beads-graph-svg g.edge:hover > polygon {
+	stroke: var(--interactive-accent);
+	fill: var(--interactive-accent);
 }
 /* Live preview line for a shift-drag dependency link (see graph.ts `wire()`).
    pointer-events:none so the drop's elementFromPoint hit-test always lands on

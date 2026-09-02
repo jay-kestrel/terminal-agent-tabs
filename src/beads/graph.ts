@@ -5,8 +5,9 @@ import { instance as vizInstance } from "@viz-js/viz";
 import type { BeadsFeature as BeadsPlugin, InlineAgentSession, PrimedSessionRequest } from "./feature";
 import { activeOptions } from "./settings";
 import { VIEW_TYPE_BEADS_GRAPH, BeadIssue, EDITABLE_STATUSES } from "./types";
-import { bdExport, bdShow, bdUpdate, bdComments, bdCommentAdd, bdDepAdd, BdError, BdOptions } from "./bd";
-import { buildGraphDot, parseExportJsonl, GraphBuildError } from "./graphBuilder";
+import { bdExport, bdShow, bdUpdate, bdComments, bdCommentAdd, bdDepAdd, bdDepRemove, BdError, BdOptions } from "./bd";
+import type { BdDepType } from "./bd";
+import { buildGraphDot, parseExportJsonl, edgeEndpoints, GraphBuildError } from "./graphBuilder";
 import { renderPriorityDot } from "./row";
 import { makePaneResizable } from "../utils";
 
@@ -506,6 +507,8 @@ export class BeadsGraphView extends ItemView {
 		// (host) regardless of what's visually under the cursor — so the click
 		// handler can't hit-test itself and must use this instead.
 		let downNode: Element | null = null;
+		// Same idea, for an edge — used only when the press wasn't on a node.
+		let downEdge: Element | null = null;
 		// Owns whichever gesture (pan or link) is currently in progress, so a
 		// second pointer going down mid-gesture (multi-touch, a stray extra
 		// button) can't start a competing one and corrupt this closure's state.
@@ -542,7 +545,20 @@ export class BeadsGraphView extends ItemView {
 			// retargets the *click* event's target to `host` for the rest of this
 			// gesture (the same quirk that once broke node clicks), which would
 			// stop it from ever reaching a button's own onclick — e.g. "Open".
-			if (this.popupEl && (e.target as Element | null)?.closest(".beads-graph-popup")) return;
+			if (this.popupEl && (e.target as Element | null)?.closest(".beads-graph-popup")) {
+				// A button inside the popup that closes it synchronously (the ×,
+				// "Open", "Remove dependency", …) clears `this.popupEl` before this
+				// click finishes bubbling to `host` — which would make the OTHER
+				// guard down in the click handler (which checks `this.popupEl`) see
+				// nothing to skip, and re-open/re-act on whatever `downNode`/`downEdge`
+				// are still holding from the press that originally opened the popup.
+				// Clearing them here, unconditionally, closes that gap regardless of
+				// what the popup's own click handler ends up doing.
+				downNode = null;
+				downEdge = null;
+				moved = true;
+				return;
+			}
 			if (activePointerId !== null) return; // a gesture is already in progress under a different pointer
 			const node = (e.target as Element | null)?.closest?.("g.node") ?? null;
 			if (node && e.shiftKey) {
@@ -568,6 +584,7 @@ export class BeadsGraphView extends ItemView {
 			downAt = { x: e.clientX, y: e.clientY };
 			last = this.toUser(svg, e.clientX, e.clientY);
 			downNode = node;
+			downEdge = node ? null : ((e.target as Element | null)?.closest?.("g.edge") ?? null);
 			activePointerId = e.pointerId;
 			host.setPointerCapture(e.pointerId);
 		});
@@ -617,23 +634,39 @@ export class BeadsGraphView extends ItemView {
 		this.registerDomEvent(host, "click", (e: MouseEvent) => {
 			// A click inside the popup (its buttons, status select, comment box)
 			// still bubbles here since nothing inside it calls stopPropagation.
-			// `downNode`/`moved` are stale in that case — left over from whatever
-			// graph-node gesture last preceded it, since pointerdown skips
-			// updating them for popup-internal presses (see the matching guard
-			// there) — so without this check every click inside the popup would
-			// re-open (or re-close) it via a phantom node click right underneath
-			// whatever the user actually meant to interact with.
-			if (this.popupEl && (e.target as Element | null)?.closest(".beads-graph-popup")) return;
+			// `downNode`/`downEdge`/`moved` are stale in that case — left over
+			// from whatever graph gesture last preceded it, since pointerdown
+			// skips updating them for popup-internal presses (see the matching
+			// guard there, which also clears them defensively) — so without this
+			// check every click inside the popup would re-open (or re-close) it
+			// via a phantom node/edge click right underneath whatever the user
+			// actually meant to interact with. Deliberately NOT conditioned on
+			// `this.popupEl` (unlike the pointerdown guard, which needs that to
+			// distinguish "press inside the current popup" from "press on the
+			// canvas that's about to open a different one"): a keyboard-activated
+			// click on the popup's own × (Tab, Enter) never fires a matching
+			// pointerdown, so `this.popupEl` may already be cleared by the
+			// button's own onclick by the time this runs — the target check
+			// alone is enough, since a click that bubbled up from inside the
+			// popup's DOM structure was never a canvas gesture regardless of
+			// `this.popupEl`'s current value.
+			if ((e.target as Element | null)?.closest(".beads-graph-popup")) return;
 			if (moved) return; // that was a pan, not a click
-			// Use the node hit-tested at pointerdown, not e.target: pointer
+			// Use the node/edge hit-tested at pointerdown, not e.target: pointer
 			// capture retargets the click event's target to `host`.
 			const g = downNode;
-			if (!g) {
-				this.closePopup();
+			if (g) {
+				const id = nodeId(g);
+				if (id) void this.showPopup(host, id, e.clientX, e.clientY);
 				return;
 			}
-			const id = nodeId(g);
-			if (id) void this.showPopup(host, id, e.clientX, e.clientY);
+			const edge = downEdge;
+			if (edge) {
+				const ep = edgeEndpoints(edge);
+				if (ep) this.showEdgePopup(host, ep.src, ep.dst, ep.type, e.clientX, e.clientY);
+				return;
+			}
+			this.closePopup();
 		});
 	}
 
@@ -731,6 +764,68 @@ export class BeadsGraphView extends ItemView {
 
 		const commentsEl = popup.createDiv({ cls: "beads-graph-popup-comments" });
 		void this.renderPopupComments(commentsEl, opts, issue.id, seq);
+	}
+
+	/**
+	 * Edge click → a tiny popup offering to remove that dependency (the inverse
+	 * of the shift-drag that creates one). No fetch needed — the ids come
+	 * straight from the edge's own `<title>` — so this is synchronous up to
+	 * the point the user actually clicks Remove.
+	 */
+	private showEdgePopup(
+		host: HTMLElement,
+		srcId: string,
+		dstId: string,
+		type: BdDepType,
+		clientX: number,
+		clientY: number,
+	): void {
+		this.closePopup();
+		const seq = ++this.popupSeq;
+		const opts = this.resolveOpts();
+		const label = type === "parent-child" ? "is the parent of" : "blocks";
+		const removeLabel = type === "parent-child" ? "Remove parent link" : "Remove dependency";
+
+		const rect = host.getBoundingClientRect();
+		const popup = host.createDiv({ cls: "beads-graph-popup beads-graph-edge-popup" });
+		popup.style.left = `${clientX - rect.left}px`;
+		popup.style.top = `${clientY - rect.top}px`;
+		this.popupEl = popup;
+
+		const head = popup.createDiv({ cls: "beads-graph-popup-head" });
+		head.createDiv({ cls: "beads-main", text: `${srcId} ${label} ${dstId}` });
+		const closeXBtn = head.createEl("button", {
+			cls: "clickable-icon beads-graph-popup-close",
+			attr: { "aria-label": "Close" },
+		});
+		closeXBtn.setText("×");
+		closeXBtn.onclick = () => this.closePopup();
+
+		if (!opts) return; // shouldn't happen (the pane wouldn't have rendered a graph), but stay defensive
+
+		const actions = popup.createDiv({ cls: "beads-graph-popup-actions" });
+		const removeBtn = actions.createEl("button", { cls: "mod-warning", text: removeLabel });
+		removeBtn.onclick = () => {
+			removeBtn.disabled = true;
+			// dstId depends on srcId — same argument order `bd dep add` uses, reversed.
+			// No `--type` needed for removal: bd matches on the two ids alone, and
+			// only one edge can ever exist between an ordered pair (it rejects a
+			// second, differently-typed one at `dep add` time).
+			bdDepRemove(opts, dstId, srcId).then(
+				() => {
+					if (seq !== this.popupSeq) return; // popup closed/superseded meanwhile
+					new Notice(`Beads: removed ${srcId} → ${dstId}`);
+					this.closePopup();
+					this.plugin.refreshViews();
+					void this.loadGraph(true);
+				},
+				(e: Error) => {
+					if (seq !== this.popupSeq) return;
+					new Notice(`Beads: ${e instanceof BdError ? e.message : String(e)}`, 8000);
+					removeBtn.disabled = false;
+				},
+			);
+		};
 	}
 
 	/** Comment thread + compose box for the node popup — same read/add split as the bead editor. */
