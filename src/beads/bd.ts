@@ -509,6 +509,20 @@ export async function bdComments(
 	}
 }
 
+/**
+ * `bd comments add -- <id> <text>` — append a comment to an issue's thread.
+ * `--` covers both positionals (not just `id`), so comment text starting
+ * with `-` can't be mistaken for a flag.
+ */
+export async function bdCommentAdd(
+	opts: BdOptions,
+	id: string,
+	text: string,
+): Promise<void> {
+	await run(["comments", "add", "--", id, text], opts);
+	invalidateReadCache();
+}
+
 // The graph view used to shell out to `bd graph --dot`, which walks the
 // dependency closure inside bd/Dolt with an N+1-shaped query per node —
 // measured on a real ~1226-issue repo: 8s for a single non-epic issue, 49s for

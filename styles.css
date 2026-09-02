@@ -1005,6 +1005,22 @@ select.beads-prop-input {
 .beads-comment-body > :first-child {
 	margin-top: 0;
 }
+.beads-comment-form {
+	margin-top: 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	align-items: flex-end;
+}
+.beads-comment-input {
+	width: 100%;
+	min-height: 64px;
+	resize: vertical;
+	font-family: var(--font-text);
+	font-size: var(--font-text-size);
+	padding: 8px 10px;
+	border-radius: 8px;
+}
 .beads-comment-body > :last-child {
 	margin-bottom: 0;
 }
@@ -1238,6 +1254,19 @@ select.beads-prop-input {
 }
 .beads-graph-popup-actions button {
 	flex: 1 1 auto;
+}
+.beads-graph-popup-comments {
+	margin-top: 10px;
+	border-top: 1px solid var(--background-modifier-border);
+	padding-top: 8px;
+}
+.beads-graph-popup-comments-title {
+	margin: 0 0 4px;
+	font-size: var(--font-smaller);
+	font-weight: var(--font-semibold);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-muted);
 }
 
 /* --- Work the bead ---------------------------------------------------- */

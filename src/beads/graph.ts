@@ -1,11 +1,11 @@
-import { ItemView, WorkspaceLeaf, Notice } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer } from "obsidian";
 import { existsSync } from "fs";
 import { join } from "path";
 import { instance as vizInstance } from "@viz-js/viz";
 import type { BeadsFeature as BeadsPlugin, InlineAgentSession, PrimedSessionRequest } from "./feature";
 import { activeOptions } from "./settings";
 import { VIEW_TYPE_BEADS_GRAPH, BeadIssue, EDITABLE_STATUSES } from "./types";
-import { bdExport, bdShow, bdUpdate, BdError, BdOptions } from "./bd";
+import { bdExport, bdShow, bdUpdate, bdComments, bdCommentAdd, BdError, BdOptions } from "./bd";
 import { buildGraphDot, parseExportJsonl, GraphBuildError } from "./graphBuilder";
 import { renderPriorityDot } from "./row";
 import { makePaneResizable } from "../utils";
@@ -511,6 +511,15 @@ export class BeadsGraphView extends ItemView {
 		this.registerDomEvent(host, "pointercancel", endDrag);
 
 		this.registerDomEvent(host, "click", (e: MouseEvent) => {
+			// A click inside the popup (its buttons, status select, comment box)
+			// still bubbles here since nothing inside it calls stopPropagation.
+			// `downNode`/`moved` are stale in that case — left over from whatever
+			// graph-node gesture last preceded it, since pointerdown skips
+			// updating them for popup-internal presses (see the matching guard
+			// there) — so without this check every click inside the popup would
+			// re-open (or re-close) it via a phantom node click right underneath
+			// whatever the user actually meant to interact with.
+			if (this.popupEl && (e.target as Element | null)?.closest(".beads-graph-popup")) return;
 			if (moved) return; // that was a pan, not a click
 			// Use the node hit-tested at pointerdown, not e.target: pointer
 			// capture retargets the click event's target to `host`.
@@ -614,6 +623,72 @@ export class BeadsGraphView extends ItemView {
 		openBtn.onclick = () => {
 			this.closePopup();
 			void this.plugin.openBead(issue.id);
+		};
+
+		const commentsEl = popup.createDiv({ cls: "beads-graph-popup-comments" });
+		void this.renderPopupComments(commentsEl, opts, issue.id, seq);
+	}
+
+	/** Comment thread + compose box for the node popup — same read/add split as the bead editor. */
+	private async renderPopupComments(
+		container: HTMLElement,
+		opts: BdOptions,
+		id: string,
+		seq: number,
+	): Promise<void> {
+		if (seq !== this.popupSeq) return; // popup closed/superseded while we were off fetching
+		container.empty();
+		let comments;
+		try {
+			comments = await bdComments(opts, id);
+		} catch (e) {
+			if (seq !== this.popupSeq) return;
+			container.createDiv({
+				cls: "beads-empty beads-error",
+				text: e instanceof BdError ? e.message : String(e),
+			});
+			return;
+		}
+		if (seq !== this.popupSeq) return;
+
+		container.createEl("h4", {
+			cls: "beads-graph-popup-comments-title",
+			text: comments.length ? `Comments (${comments.length})` : "Comments",
+		});
+		for (const c of comments) {
+			const card = container.createDiv({ cls: "beads-comment" });
+			const head = card.createDiv({ cls: "beads-comment-head" });
+			head.createSpan({ cls: "beads-comment-author", text: c.author ?? "unknown" });
+			if (c.created_at) head.createSpan({ cls: "beads-comment-date", text: c.created_at });
+			const bodyEl = card.createDiv({ cls: "beads-comment-body" });
+			await MarkdownRenderer.render(this.app, c.text ?? "", bodyEl, "", this);
+		}
+		if (seq !== this.popupSeq) return;
+
+		const form = container.createDiv({ cls: "beads-comment-form" });
+		const input = form.createEl("textarea", {
+			cls: "beads-comment-input",
+			attr: { placeholder: "Add a comment…" },
+		});
+		const submit = form.createEl("button", { cls: "mod-cta", text: "Comment" });
+		submit.disabled = true;
+		input.addEventListener("input", () => {
+			submit.disabled = !input.value.trim();
+		});
+		submit.onclick = () => {
+			const text = input.value.trim();
+			if (!text) return;
+			submit.disabled = true;
+			input.disabled = true;
+			bdCommentAdd(opts, id, text).then(
+				() => void this.renderPopupComments(container, opts, id, seq), // redraws with the new comment + a fresh empty box
+				(e: Error) => {
+					if (seq !== this.popupSeq) return;
+					new Notice(`Beads: ${e.message}`);
+					submit.disabled = false;
+					input.disabled = false;
+				},
+			);
 		};
 	}
 

@@ -28,6 +28,7 @@ import {
 	bdCreate,
 	bdDepList,
 	bdComments,
+	bdCommentAdd,
 	BdUpdateFields,
 	BdError,
 	BdOptions,
@@ -647,14 +648,16 @@ export class BeadEditorView extends ItemView {
 		}
 	}
 
-	// --- comments (read-only, markdown) ----------------------------------
+	// --- comments (markdown, read + add) ----------------------------------
 
 	private async loadComments(container: HTMLElement): Promise<void> {
 		const opts = this.resolveOpts();
-		if (!opts || !this.id) return;
+		const id = this.id;
+		container.empty();
+		if (!opts || !id) return;
 		let comments;
 		try {
-			comments = await bdComments(opts, this.id);
+			comments = await bdComments(opts, id);
 		} catch (e) {
 			container.createDiv({
 				cls: "beads-editor-cerr",
@@ -662,10 +665,9 @@ export class BeadEditorView extends ItemView {
 			});
 			return;
 		}
-		if (comments.length === 0) return;
 		container.createEl("h4", {
 			cls: "beads-editor-section",
-			text: `Comments (${comments.length})`,
+			text: comments.length ? `Comments (${comments.length})` : "Comments",
 		});
 		for (const c of comments) {
 			const card = container.createDiv({ cls: "beads-comment" });
@@ -680,6 +682,31 @@ export class BeadEditorView extends ItemView {
 			const bodyEl = card.createDiv({ cls: "beads-comment-body" });
 			await MarkdownRenderer.render(this.app, c.text ?? "", bodyEl, "", this);
 		}
+
+		const form = container.createDiv({ cls: "beads-comment-form" });
+		const input = form.createEl("textarea", {
+			cls: "beads-comment-input",
+			attr: { placeholder: "Add a comment…" },
+		});
+		const submit = form.createEl("button", { cls: "mod-cta", text: "Comment" });
+		submit.disabled = true;
+		input.addEventListener("input", () => {
+			submit.disabled = !input.value.trim();
+		});
+		submit.onclick = () => {
+			const text = input.value.trim();
+			if (!text) return;
+			submit.disabled = true;
+			input.disabled = true;
+			bdCommentAdd(opts, id, text).then(
+				() => void this.loadComments(container), // redraws with the new comment + a fresh empty box
+				(e: Error) => {
+					new Notice(`Beads: ${e.message}`);
+					submit.disabled = false;
+					input.disabled = false;
+				},
+			);
+		};
 	}
 }
 
