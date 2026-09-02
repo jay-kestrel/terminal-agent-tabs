@@ -380,13 +380,12 @@ export class BeadsGraphView extends ItemView {
 			text: "Shift-drag a node onto another to add a dependency",
 		});
 		const buttons = header.createDiv({ cls: "beads-graph-actions" });
-		// Unlinked — the graph's own scoping (one issue's connected component,
-		// unless "all") means a brand new bead with no dependencies yet won't
-		// actually appear here until something links to it. Node popups'
-		// "Add child"/"Add follow-up" are the pre-linked routes; this is the one
-		// for a bead that doesn't relate to anything on screen yet.
+		// Linked under the scoped epic when there is one — the graph's own
+		// scoping (one issue's connected component, unless "all") means an
+		// unlinked bead would silently not appear here at all. See
+		// `createGraphBead` for the non-epic/"all" fallback.
 		const newBead = buttons.createEl("button", { text: "New bead" });
-		newBead.onclick = () => void this.plugin.newBead();
+		newBead.onclick = () => void this.createGraphBead();
 		// Bead-agnostic — no specific bead is "the" subject while looking at a
 		// graph, so this opens the same harness-menu/preview flow as "Work the
 		// bead" but with a short, project-scoped prompt instead of one bead's.
@@ -838,5 +837,31 @@ export class BeadsGraphView extends ItemView {
 		} catch (e) {
 			new Notice(`Beads: ${e instanceof BdError ? e.message : String(e)}`, 8000);
 		}
+	}
+
+	/**
+	 * "New bead" from the graph toolbar. Linking it to whatever the graph is
+	 * currently scoped to isn't just nicer UX: the graph only ever draws one
+	 * issue's connected component (or "all") — an unlinked bead wouldn't show
+	 * up on screen at all until something links to it later. Mirrors the node
+	 * popup's own rule: a child under an epic, a follow-up (blocked-by) under
+	 * anything else. "All issues" mode has no single bead to link under, so it
+	 * falls back to the plain unlinked form, same as before.
+	 */
+	private async createGraphBead(): Promise<void> {
+		const opts = this.resolveOpts();
+		const id = this.state.id;
+		if (!opts || !id) {
+			void this.plugin.newBead();
+			return;
+		}
+		let issue: BeadIssue | null;
+		try {
+			issue = await bdShow(opts, id);
+		} catch {
+			void this.plugin.newBead(); // bd hiccup — fall back to unlinked rather than block bead creation
+			return;
+		}
+		void this.plugin.newBead(issue?.issue_type === "epic" ? { parent: id } : { blockedBy: id });
 	}
 }
