@@ -1102,6 +1102,16 @@ select.beads-prop-input {
 .beads-graph-title {
 	font-weight: var(--font-semibold);
 }
+.beads-graph-hint {
+	flex: 1 1 auto;
+	min-width: 0;
+	text-align: center;
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 .beads-graph-actions {
 	display: flex;
 	gap: 6px;
@@ -1134,6 +1144,15 @@ select.beads-prop-input {
 .beads-graph-svg g.node:hover > path {
 	stroke: var(--interactive-accent);
 	stroke-width: 2;
+}
+/* Live preview line for a shift-drag dependency link (see graph.ts `wire()`).
+   pointer-events:none so the drop's elementFromPoint hit-test always lands on
+   whatever is actually underneath, never the line itself. */
+.beads-graph-link-line {
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+	stroke-dasharray: 6 4;
+	pointer-events: none;
 }
 
 /* Epics tab — an epic header that expands in place into its own children. */

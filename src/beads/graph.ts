@@ -5,7 +5,7 @@ import { instance as vizInstance } from "@viz-js/viz";
 import type { BeadsFeature as BeadsPlugin, InlineAgentSession, PrimedSessionRequest } from "./feature";
 import { activeOptions } from "./settings";
 import { VIEW_TYPE_BEADS_GRAPH, BeadIssue, EDITABLE_STATUSES } from "./types";
-import { bdExport, bdShow, bdUpdate, bdComments, bdCommentAdd, BdError, BdOptions } from "./bd";
+import { bdExport, bdShow, bdUpdate, bdComments, bdCommentAdd, bdDepAdd, BdError, BdOptions } from "./bd";
 import { buildGraphDot, parseExportJsonl, GraphBuildError } from "./graphBuilder";
 import { renderPriorityDot } from "./row";
 import { makePaneResizable } from "../utils";
@@ -105,6 +105,14 @@ export class BeadsGraphView extends ItemView {
 	// (or closed the popup) in the meantime.
 	private popupEl?: HTMLElement;
 	private popupSeq = 0;
+
+	// True for the duration of a shift-drag dependency link (see `wire()`).
+	// A background refresh mid-drag rebuilds the whole SVG/`zoomLayer` out from
+	// under `wire()`'s closure — the gesture just goes inert rather than
+	// throwing, but the dashed line vanishes and the drop silently does
+	// nothing, so treat an in-progress drag the same as an open popup: skip
+	// the refresh rather than yank the canvas out from under the user's hand.
+	private linking = false;
 
 	// The graph and the agent pane are SIBLINGS, not nested — same reasoning as
 	// BeadEditorView: render() empties its own root on every load, and a
@@ -255,6 +263,9 @@ export class BeadsGraphView extends ItemView {
 		// popup's DOM (render() empties the canvas) right after opening it. Skip;
 		// the next timer/watcher tick after the popup closes will catch up.
 		if (this.popupEl) return;
+		// A rebuild mid-shift-drag would swap out the SVG/zoomLayer the drag's
+		// dashed line and drop-target hit-testing are anchored to — see `linking`.
+		if (this.linking) return;
 		void this.loadGraph(true);
 	}
 
@@ -349,6 +360,12 @@ export class BeadsGraphView extends ItemView {
 		const root = this.ensureShell();
 		root.empty();
 		this.zoomLayer = undefined;
+		// A rebuild here discards `wire()`'s whole closure, including whatever
+		// shift-drag gesture it was mid-flight on — that old closure's own
+		// cleanup (`endLink`) never runs on the new DOM, so this view-level flag
+		// needs resetting here too or it can get stuck true forever, silently
+		// disabling every future background refresh (see `refreshFromExternalChange`).
+		this.linking = false;
 		this.popupEl = undefined;
 		this.popupSeq++; // invalidate any in-flight bdShow from before this re-render
 		root.addClass("beads-graph-pane");
@@ -357,6 +374,10 @@ export class BeadsGraphView extends ItemView {
 		header.createDiv({
 			cls: "beads-graph-title",
 			text: this.state.all ? "All issues" : (this.state.id ?? "Beads graph"),
+		});
+		header.createDiv({
+			cls: "beads-graph-hint",
+			text: "Shift-drag a node onto another to add a dependency",
 		});
 		const buttons = header.createDiv({ cls: "beads-graph-actions" });
 		// Bead-agnostic — no specific bead is "the" subject while looking at a
@@ -479,6 +500,36 @@ export class BeadsGraphView extends ItemView {
 		// (host) regardless of what's visually under the cursor — so the click
 		// handler can't hit-test itself and must use this instead.
 		let downNode: Element | null = null;
+		// Owns whichever gesture (pan or link) is currently in progress, so a
+		// second pointer going down mid-gesture (multi-touch, a stray extra
+		// button) can't start a competing one and corrupt this closure's state.
+		let activePointerId: number | null = null;
+
+		// Shift-drag from one node onto another draws a dependency edge instead
+		// of panning. `linkFrom` being set is what distinguishes that gesture
+		// from an ordinary pan/click for the move/up handlers below. `linkGroup`
+		// is the node's own parent `<g>` — graphviz emits every node positioned
+		// directly in that group's coordinate space (no transform on the node
+		// itself), so anchoring the line there and converting the pointer
+		// through that SAME group's CTM keeps both ends in one consistent space
+		// (and folds in our own pan/zoom automatically, since that group sits
+		// inside `zoomLayer`) — unlike `toUser()`, which is the OUTER svg's
+		// space, one level further out than where the node's own geometry lives.
+		let linkFrom: Element | null = null;
+		let linkGroup: SVGGraphicsElement | null = null;
+		let linkLine: SVGElement | null = null;
+		const nodeCenter = (node: Element): { x: number; y: number } => {
+			const bbox = (node as unknown as SVGGraphicsElement).getBBox();
+			return { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 };
+		};
+		const endLink = () => {
+			linkFrom = null;
+			linkGroup = null;
+			linkLine?.remove();
+			linkLine = null;
+			this.linking = false;
+		};
+
 		this.registerDomEvent(host, "pointerdown", (e: PointerEvent) => {
 			if (e.button !== 0) return;
 			// Don't engage pan/capture for presses inside the popup: setPointerCapture
@@ -486,14 +537,45 @@ export class BeadsGraphView extends ItemView {
 			// gesture (the same quirk that once broke node clicks), which would
 			// stop it from ever reaching a button's own onclick — e.g. "Open".
 			if (this.popupEl && (e.target as Element | null)?.closest(".beads-graph-popup")) return;
+			if (activePointerId !== null) return; // a gesture is already in progress under a different pointer
+			const node = (e.target as Element | null)?.closest?.("g.node") ?? null;
+			if (node && e.shiftKey) {
+				const parent = node.parentNode as SVGGraphicsElement | null;
+				if (!parent) return;
+				// Compute geometry and create the line BEFORE touching any state, so
+				// a failure here (e.g. a detached node) leaves nothing to clean up.
+				const c = nodeCenter(node);
+				linkLine = parent.createSvg("line", {
+					cls: "beads-graph-link-line",
+					attr: { x1: String(c.x), y1: String(c.y), x2: String(c.x), y2: String(c.y) },
+				});
+				linkFrom = node;
+				linkGroup = parent;
+				this.linking = true;
+				activePointerId = e.pointerId;
+				moved = true; // suppress the click handler's phantom-node-click fallback below
+				host.setPointerCapture(e.pointerId);
+				return;
+			}
 			dragging = true;
 			moved = false;
 			downAt = { x: e.clientX, y: e.clientY };
 			last = this.toUser(svg, e.clientX, e.clientY);
-			downNode = (e.target as Element | null)?.closest?.("g.node") ?? null;
+			downNode = node;
+			activePointerId = e.pointerId;
 			host.setPointerCapture(e.pointerId);
 		});
 		this.registerDomEvent(host, "pointermove", (e: PointerEvent) => {
+			if (e.pointerId !== activePointerId) return;
+			if (linkFrom) {
+				const ctm = linkGroup?.getScreenCTM() ?? null;
+				const p = ctm ? new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse()) : null;
+				if (p) {
+					linkLine?.setAttribute("x2", String(p.x));
+					linkLine?.setAttribute("y2", String(p.y));
+				}
+				return;
+			}
 			if (!dragging) return;
 			if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > CLICK_SLOP_PX) moved = true;
 			const p = this.toUser(svg, e.clientX, e.clientY);
@@ -503,9 +585,25 @@ export class BeadsGraphView extends ItemView {
 			this.applyTransform();
 		});
 		const endDrag = (e: PointerEvent) => {
-			if (!dragging) return;
-			dragging = false;
+			if (e.pointerId !== activePointerId) return;
+			activePointerId = null;
 			if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId);
+			if (linkFrom) {
+				const from = linkFrom;
+				endLink();
+				// pointer-events:none on the line (see styles.css) guarantees this
+				// hits the node/canvas actually under the cursor, never the line itself.
+				const target = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest?.("g.node") ?? null;
+				const fromId = nodeId(from);
+				const toId = target ? nodeId(target) : undefined;
+				// Compare ids, not elements: a background refresh mid-drag (skipped
+				// while `this.linking` is true, but a race is still cheap to guard)
+				// would make `target` a freshly-rendered node for the SAME bead as
+				// `from`, which `target !== from` alone wouldn't catch.
+				if (fromId && toId && fromId !== toId) void this.createDependency(fromId, toId);
+				return;
+			}
+			dragging = false;
 		};
 		this.registerDomEvent(host, "pointerup", endDrag);
 		this.registerDomEvent(host, "pointercancel", endDrag);
@@ -708,6 +806,30 @@ export class BeadsGraphView extends ItemView {
 		} catch (e) {
 			new Notice(`Beads: ${e instanceof BdError ? e.message : String(e)}`, 8000);
 			select.disabled = false;
+		}
+	}
+
+	/**
+	 * Shift-drag from `fromId` onto `toId` (see `wire()`): `fromId` blocks
+	 * `toId` — the same direction the graph's own edges are drawn, dependency
+	 * -> dependent (graphBuilder.ts). bd rejects an edge that would create a
+	 * cycle, so a rejected drag just surfaces bd's own error and changes nothing.
+	 *
+	 * Unlike `updateStatus`, this preserves pan/zoom (`loadGraph(true)`):
+	 * resetting the view right after a drag the user just aimed by hand would
+	 * undo the orientation the gesture depends on.
+	 */
+	private async createDependency(fromId: string, toId: string): Promise<void> {
+		if (fromId === toId) return; // defense in depth — the drag handler already filters this
+		const opts = this.resolveOpts();
+		if (!opts) return;
+		try {
+			await bdDepAdd(opts, toId, fromId);
+			new Notice(`Beads: ${fromId} blocks ${toId}`);
+			this.plugin.refreshViews();
+			await this.loadGraph(true);
+		} catch (e) {
+			new Notice(`Beads: ${e instanceof BdError ? e.message : String(e)}`, 8000);
 		}
 	}
 }

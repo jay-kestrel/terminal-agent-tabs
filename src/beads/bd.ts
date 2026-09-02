@@ -523,6 +523,24 @@ export async function bdCommentAdd(
 	invalidateReadCache();
 }
 
+/** Dependency types the graph view actually draws (see graphBuilder.ts's EDGE_STYLE) — the only ones offered as a graphical link. */
+export type BdDepType = "blocks" | "parent-child";
+
+/**
+ * `bd dep add --type=<type> -- <issueId> <dependsOnId>` — `issueId` depends on
+ * (is blocked by / is a child of) `dependsOnId`. bd itself rejects an edge
+ * that would create a cycle, so no separate cycle check is needed here.
+ */
+export async function bdDepAdd(
+	opts: BdOptions,
+	issueId: string,
+	dependsOnId: string,
+	type: BdDepType = "blocks",
+): Promise<void> {
+	await run(["dep", "add", `--type=${type}`, "--", issueId, dependsOnId], opts);
+	invalidateReadCache();
+}
+
 // The graph view used to shell out to `bd graph --dot`, which walks the
 // dependency closure inside bd/Dolt with an N+1-shaped query per node —
 // measured on a real ~1226-issue repo: 8s for a single non-epic issue, 49s for
