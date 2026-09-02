@@ -380,6 +380,13 @@ export class BeadsGraphView extends ItemView {
 			text: "Shift-drag a node onto another to add a dependency",
 		});
 		const buttons = header.createDiv({ cls: "beads-graph-actions" });
+		// Unlinked — the graph's own scoping (one issue's connected component,
+		// unless "all") means a brand new bead with no dependencies yet won't
+		// actually appear here until something links to it. Node popups'
+		// "Add child"/"Add follow-up" are the pre-linked routes; this is the one
+		// for a bead that doesn't relate to anything on screen yet.
+		const newBead = buttons.createEl("button", { text: "New bead" });
+		newBead.onclick = () => void this.plugin.newBead();
 		// Bead-agnostic — no specific bead is "the" subject while looking at a
 		// graph, so this opens the same harness-menu/preview flow as "Work the
 		// bead" but with a short, project-scoped prompt instead of one bead's.
