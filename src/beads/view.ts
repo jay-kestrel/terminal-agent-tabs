@@ -17,6 +17,15 @@ import {
 } from "./bd";
 import { renderIssueRow } from "./row";
 import { EpicsState, emptyEpicsState, renderEpics } from "./epics";
+import {
+	FilterScope,
+	FilterState,
+	distinctOptions,
+	emptyFilters,
+	hasActiveFilter,
+	matchesFilters,
+	statusLabel,
+} from "./filters";
 
 interface TabDef {
 	key: string;
@@ -64,74 +73,6 @@ function byPriority(issues: BeadIssue[]): BeadIssue[] {
 		);
 }
 
-/**
- * Client-side filter state for the active tab's list. Empty string = no
- * constraint on that field. Kept simple on purpose: this is a plain
- * "every selected field must match" AND — bd's own query language already
- * handles real boolean expressions (see `bd query --help` / codeblock.ts's
- * `query:` directive), so there's no reason to reinvent that here for four
- * dropdowns worth of state.
- */
-interface FilterState {
-	label: string;
-	assignee: string;
-	priority: string;
-	type: string;
-	/** Free-text substring match against id + title, case-insensitive. */
-	search: string;
-}
-
-function emptyFilters(): FilterState {
-	return { label: "", assignee: "", priority: "", type: "", search: "" };
-}
-
-function hasActiveFilter(f: FilterState): boolean {
-	return (
-		f.label !== "" || f.assignee !== "" || f.priority !== "" || f.type !== "" || f.search.trim() !== ""
-	);
-}
-
-/** The assignee shown/filtered on: `assignee` if set, else `owner`. */
-function issueAssignee(issue: BeadIssue): string {
-	return issue.assignee || issue.owner || "";
-}
-
-function matchesFilters(issue: BeadIssue, f: FilterState): boolean {
-	if (f.label && !(issue.labels ?? []).includes(f.label)) return false;
-	if (f.assignee && issueAssignee(issue) !== f.assignee) return false;
-	if (f.priority && String(issue.priority ?? 2) !== f.priority) return false;
-	if (f.type && issue.issue_type !== f.type) return false;
-	const q = f.search.trim().toLowerCase();
-	if (q && !issue.id.toLowerCase().includes(q) && !issue.title.toLowerCase().includes(q)) return false;
-	return true;
-}
-
-/**
- * Distinct values present in the currently-loaded issue set, for populating
- * the filter dropdowns. Deliberately scoped to what's loaded (not a separate
- * bd call to enumerate every label/assignee in the project) — the pane already
- * paginates, so "options visible right now" is the honest set to offer; a
- * value that hasn't loaded yet naturally appears once "Load more" brings it in.
- */
-function distinctOptions(issues: BeadIssue[]) {
-	const labels = new Set<string>();
-	const assignees = new Set<string>();
-	const types = new Set<string>();
-	const priorities = new Set<number>();
-	for (const issue of issues) {
-		for (const l of issue.labels ?? []) labels.add(l);
-		const a = issueAssignee(issue);
-		if (a) assignees.add(a);
-		if (issue.issue_type) types.add(issue.issue_type);
-		priorities.add(issue.priority ?? 2);
-	}
-	return {
-		labels: Array.from(labels).sort(),
-		assignees: Array.from(assignees).sort(),
-		types: Array.from(types).sort(),
-		priorities: Array.from(priorities).sort((a, b) => a - b),
-	};
-}
 
 /**
  * Tabbed, lazily-loaded pane. Only the active tab hits `bd` (plus one cheap
@@ -145,8 +86,13 @@ export class BeadsView extends ItemView {
 	private epics: EpicsState = emptyEpicsState();
 	private baseState: "ok" | "no-root" | "no-db" = "no-root";
 	private loadSeq = 0;
-	/** Label/assignee/priority/type filter for the active tab's list, epics included (filtered on the epic row itself, not its children). */
+	/** Label/assignee/priority/type (+ status on Epics) filter for the active tab's list, epics included (filtered on the epic row itself, not its children). */
 	private filters: FilterState = emptyFilters();
+
+	/** Which filters apply to the active tab (status applies on Epics only). */
+	private filterScope(): FilterScope {
+		return { epics: this.active === EPICS_TAB };
+	}
 	/**
 	 * Container for just the row list + load-more button, filled in by
 	 * `renderFilterBar` and updated in place by `refreshList()`. Kept so the
@@ -477,7 +423,7 @@ export class BeadsView extends ItemView {
 
 	/**
 	 * Compact filter bar for the active tab's list: label / assignee / priority
-	 * / type, each populated from the distinct values in the currently-loaded
+	 * / type (+ status on the Epics tab), each populated from the distinct values in the currently-loaded
 	 * issue set (not a fixed list, not a separate bd call). Client-side, not a
 	 * `bd query` expression — see the module-level `FilterState` doc for why.
 	 */
@@ -570,6 +516,16 @@ export class BeadsView extends ItemView {
 			opts.types.map((t) => ({ value: t, text: t })),
 			(v) => (this.filters.type = v),
 		);
+		// Epics tab only: the other tabs are each already one status, so the
+		// filter is neither shown nor applied there (see `FilterState.status`).
+		if (this.active === EPICS_TAB) {
+			addSelect(
+				"All statuses",
+				this.filters.status,
+				opts.statuses.map((s) => ({ value: s, text: statusLabel(s) })),
+				(v) => (this.filters.status = v),
+			);
+		}
 
 		// Always created (visibility toggled by `refreshList()`), so the search
 		// box's targeted update can show/hide it without rebuilding the bar.
@@ -577,7 +533,7 @@ export class BeadsView extends ItemView {
 			cls: "beads-filter-clear",
 			text: "Clear filters",
 		});
-		clear.toggleClass("beads-hidden", !hasActiveFilter(this.filters));
+		clear.toggleClass("beads-hidden", !hasActiveFilter(this.filters, this.filterScope()));
 		clear.onclick = () => {
 			const wasSearching = this.filters.search.trim() !== "";
 			this.filters = emptyFilters();
@@ -605,11 +561,12 @@ export class BeadsView extends ItemView {
 			this.render(); // no partial target mounted yet — fall back to a full render
 			return;
 		}
-		this.clearFilterBtn?.toggleClass("beads-hidden", !hasActiveFilter(this.filters));
+		const scope = this.filterScope();
+		this.clearFilterBtn?.toggleClass("beads-hidden", !hasActiveFilter(this.filters, scope));
 		wrap.empty();
 
 		if (this.active === EPICS_TAB) {
-			const visible = this.epics.epics.filter((e) => matchesFilters(e.epic, this.filters));
+			const visible = this.epics.epics.filter((e) => matchesFilters(e.epic, this.filters, scope));
 			if (visible.length === 0) {
 				wrap.createDiv({
 					cls: "beads-empty",
@@ -628,7 +585,7 @@ export class BeadsView extends ItemView {
 		}
 
 		const tab = this.tabs[this.active];
-		const visible = tab.issues.filter((i) => matchesFilters(i, this.filters));
+		const visible = tab.issues.filter((i) => matchesFilters(i, this.filters, scope));
 
 		if (visible.length === 0) {
 			wrap.createDiv({
@@ -727,7 +684,8 @@ export class BeadsView extends ItemView {
 				body.createDiv({ cls: "beads-empty", text: "No open epics." });
 				return;
 			}
-			// Same search/label/assignee/priority filter bar as the other tabs,
+			// Same search/label/assignee/priority filter bar as the other tabs (plus
+			// status, which only the Epics tab offers),
 			// applied to the epic rows themselves (not their children — those load
 			// lazily per epic on expand, so filtering into them would mean eagerly
 			// fetching every epic's children just to search).
