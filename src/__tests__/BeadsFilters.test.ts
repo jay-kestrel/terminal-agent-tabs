@@ -96,3 +96,18 @@ describe("statusLabel", () => {
 		expect(statusLabel("open")).toBe("open");
 	});
 });
+
+describe("author merging", () => {
+	it("merges an owner email with the same person's assignee name and prefers the name", () => {
+		const opts = distinctOptions(
+			[issue({ owner: "Corey.Wynn@kestrelintelligence.com" }), issue({ assignee: "Corey Wynn" })],
+			["genesis.velazquezreyes@kestrelintelligence.com"],
+		);
+		expect(opts.assignees).toEqual(["Corey Wynn", "Genesis Velazquezreyes"]);
+	});
+	it("filters by person across email and name forms", () => {
+		const f = filters({ assignee: "Corey Wynn" });
+		expect(matchesFilters(issue({ owner: "Corey.Wynn@kestrelintelligence.com" }), f, OTHER_TAB)).toBe(true);
+		expect(matchesFilters(issue({ owner: "abraham.edens@kestrelintelligence.com" }), f, OTHER_TAB)).toBe(false);
+	});
+});

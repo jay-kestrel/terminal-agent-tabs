@@ -7,6 +7,7 @@ import { BeadIssue, PRIORITIES, VIEW_TYPE_BEADS } from "./types";
 import {
 	bdReady,
 	bdBlocked,
+	bdListAll,
 	bdByStatus,
 	bdChildren,
 	bdEpicStatus,
@@ -86,6 +87,8 @@ export class BeadsView extends ItemView {
 	private epics: EpicsState = emptyEpicsState();
 	private baseState: "ok" | "no-root" | "no-db" = "no-root";
 	private loadSeq = 0;
+	/** Every assignee/owner across the project (not just the loaded page), for the author dropdown. */
+	private allAuthors: string[] = [];
 	/** Label/assignee/priority/type (+ status on Epics) filter for the active tab's list, epics included (filtered on the epic row itself, not its children). */
 	private filters: FilterState = emptyFilters();
 
@@ -215,6 +218,14 @@ export class BeadsView extends ItemView {
 			return;
 		}
 		const seq = ++this.loadSeq;
+		void bdListAll(opts)
+			.then((all) => {
+				this.allAuthors = all.map((i) => i.assignee || i.owner || "").filter(Boolean);
+				if (seq === this.loadSeq) this.render();
+			})
+			.catch(() => {
+				/* author list is optional chrome; loaded-page authors still show */
+			});
 		if (precomputedCounts) {
 			this.counts = precomputedCounts;
 		} else {
@@ -428,7 +439,7 @@ export class BeadsView extends ItemView {
 	 * `bd query` expression — see the module-level `FilterState` doc for why.
 	 */
 	private renderFilterBar(body: HTMLElement, issues: BeadIssue[]): void {
-		const opts = distinctOptions(issues);
+		const opts = distinctOptions(issues, this.allAuthors);
 		const bar = body.createDiv({ cls: "beads-filterbar" });
 
 		const search = bar.createEl("input", {

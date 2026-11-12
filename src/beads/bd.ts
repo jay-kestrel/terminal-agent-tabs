@@ -257,6 +257,12 @@ export async function bdByStatus(
 	return parseIssues(stdout);
 }
 
+/** Every non-closed bead (`--limit 0` = unlimited), to enumerate authors beyond the loaded page. */
+export async function bdListAll(opts: BdOptions): Promise<BeadIssue[]> {
+	const { stdout } = await run(["list", "--json", "--no-pager", "--limit", "0"], opts);
+	return parseIssues(stdout);
+}
+
 /**
  * `bd search --json --status <status> -- <query>` — text search over title and
  * ID run BY BD, against the whole database rather than the loaded page.

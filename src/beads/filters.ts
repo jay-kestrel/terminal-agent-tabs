@@ -52,9 +52,35 @@ export function issueAssignee(issue: BeadIssue): string {
 	return issue.assignee || issue.owner || "";
 }
 
+/**
+ * Identity key for an author: lowercased with punctuation/whitespace dropped, and
+ * an email reduced to its local part, so "Corey Wynn" and "Corey.Wynn@kestrel…"
+ * are the same person. (bd records `owner` as an email and `assignee` as a name.)
+ */
+export function authorKey(name: string): string {
+	return name.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** One display label per person: a real name beats an email's title-cased local part. */
+export function canonicalAuthors(names: Iterable<string>): string[] {
+	const byKey = new Map<string, { label: string; isEmail: boolean }>();
+	for (const n of names) {
+		const key = authorKey(n);
+		if (!key) continue;
+		const isEmail = n.includes("@");
+		const prev = byKey.get(key);
+		if (prev && (!prev.isEmail || isEmail)) continue; // keep the first real name
+		const label = isEmail
+			? n.split("@")[0].split(/[._-]+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ")
+			: n;
+		byKey.set(key, { label, isEmail });
+	}
+	return Array.from(byKey.values(), (v) => v.label).sort((a, b) => a.localeCompare(b));
+}
+
 export function matchesFilters(issue: BeadIssue, f: FilterState, scope: FilterScope): boolean {
 	if (f.label && !(issue.labels ?? []).includes(f.label)) return false;
-	if (f.assignee && issueAssignee(issue) !== f.assignee) return false;
+	if (f.assignee && authorKey(issueAssignee(issue)) !== authorKey(f.assignee)) return false;
 	if (f.priority && String(issue.priority ?? 2) !== f.priority) return false;
 	if (f.type && issue.issue_type !== f.type) return false;
 	if (scope.epics && f.status && issue.status !== f.status) return false;
@@ -80,12 +106,11 @@ function byStatusOrder(a: string, b: string): number {
 
 /**
  * Distinct values present in the currently-loaded issue set, for populating
- * the filter dropdowns. Deliberately scoped to what's loaded (not a separate
- * bd call to enumerate every label/assignee in the project) — the pane already
- * paginates, so "options visible right now" is the honest set to offer; a
- * value that hasn't loaded yet naturally appears once "Load more" brings it in.
+ * the filter dropdowns. Labels/types/etc. are scoped to what's loaded; authors
+ * also include `allAuthors` (every assignee/owner in the project, fetched once
+ * by the view) so people whose beads sit beyond the first page still appear.
  */
-export function distinctOptions(issues: BeadIssue[]) {
+export function distinctOptions(issues: BeadIssue[], allAuthors: string[] = []) {
 	const labels = new Set<string>();
 	const assignees = new Set<string>();
 	const types = new Set<string>();
@@ -101,7 +126,7 @@ export function distinctOptions(issues: BeadIssue[]) {
 	}
 	return {
 		labels: Array.from(labels).sort(),
-		assignees: Array.from(assignees).sort(),
+		assignees: canonicalAuthors([...assignees, ...allAuthors]),
 		types: Array.from(types).sort(),
 		statuses: Array.from(statuses).sort(byStatusOrder),
 		priorities: Array.from(priorities).sort((a, b) => a - b),
